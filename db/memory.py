@@ -9,7 +9,7 @@ from ..models.notification import NotificationEvent
 from ..models.ledger import LedgerEntry
 from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
-from ..models.user import UserAccount
+from ..models.user import UserAccount, UserCreditInfo
 
 
 class InMemoryDBManager(BaseDBManager):
@@ -65,6 +65,20 @@ class InMemoryDBManager(BaseDBManager):
         user_txs.sort(key=lambda t: t.timestamp)
         return user_txs[-1].current_credits
 
+    async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
+        """Optimized: compute balance and reserved in a single pass."""
+        balance = await self.get_user_credits(user_id)
+        reserved = sum(
+            r.credits
+            for r in self._reserved
+            if r.user_id == user_id and not r.committed and not r.released
+        )
+        return UserCreditInfo(
+            balance=balance,
+            reserved=reserved,
+            available=balance - reserved,
+        )
+
     # Transaction operations
     async def add_transaction(self, tx: Transaction) -> Transaction:
         if tx.id is None:
@@ -108,6 +122,13 @@ class InMemoryDBManager(BaseDBManager):
             for r in self._reserved
             if r.subscription_plan_id == subscription_plan_id and not r.released
         ]
+
+    async def get_reserved_credits_for_user(self, user_id: str) -> int:
+        return sum(
+            r.credits
+            for r in self._reserved
+            if r.user_id == user_id and not r.committed and not r.released
+        )
 
     # Subscription operations
     async def add_subscription_plan(

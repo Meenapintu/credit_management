@@ -142,6 +142,7 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
                 if raw is not None:
                     actual = int(raw)
                     if actual > 0:
+                        await self.credit_service.unreserve_credits(reservation)
                         await self.credit_service.deduct_credits(
                             user_id=user_id,
                             amount=actual,
@@ -156,7 +157,8 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
                 extra={"path": request.url.path, "user_id": user_id},
             )
         finally:
-            await self.credit_service.unreserve_credits(reservation)
+            if deducted == 0:
+                await self.credit_service.unreserve_credits(reservation)
 
         if body_bytes is not None:
             headers = dict(response.headers)

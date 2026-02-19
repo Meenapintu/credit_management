@@ -9,7 +9,7 @@ from ..models.notification import NotificationEvent
 from ..models.ledger import LedgerEntry
 from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
-from ..models.user import UserAccount
+from ..models.user import UserAccount, UserCreditInfo
 
 
 class AsyncTransaction(Protocol):
@@ -55,6 +55,14 @@ class BaseDBManager(ABC):
     async def get_user_credits(self, user_id: str) -> int:
         ...
 
+    @abstractmethod
+    async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
+        """
+        Get balance, reserved, and available credits in a single optimized call.
+        This is more efficient than calling get_user_credits + get_reserved_credits_for_user separately.
+        """
+        ...
+
     # Transaction / ledger operations
     @abstractmethod
     async def add_transaction(self, tx: Transaction) -> Transaction:
@@ -91,6 +99,14 @@ class BaseDBManager(ABC):
     async def get_reserved_credits_for_subscription_plan(
         self, subscription_plan_id: str
     ) -> Iterable[ReservedCredits]:
+        ...
+
+    @abstractmethod
+    async def get_reserved_credits_for_user(self, user_id: str) -> int:
+        """
+        Sum of credits currently reserved for this user (not yet committed or released).
+        Used to compute available balance = get_user_credits - get_reserved_credits_for_user.
+        """
         ...
 
     # Subscription operations

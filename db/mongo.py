@@ -13,7 +13,7 @@ from ..models.ledger import LedgerEntry
 from ..models.notification import NotificationEvent
 from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
-from ..models.user import UserAccount
+from ..models.user import UserAccount, UserCreditInfo
 
 
 TModel = TypeVar("TModel", bound=DBSerializableModel)
@@ -107,6 +107,26 @@ class MongoDBManager(BaseDBManager):
         tx = self._decode(Transaction, docs[0])
         return tx.current_credits if tx else 0
 
+    async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
+        """
+        Optimized: get balance and reserved in parallel (two queries run concurrently).
+        For MongoDB, we could use aggregation pipelines, but parallel queries are simpler
+        and still efficient.
+        """
+        import asyncio
+
+        # Run both queries concurrently
+        balance_task = asyncio.create_task(self.get_user_credits(user_id))
+        reserved_task = asyncio.create_task(self.get_reserved_credits_for_user(user_id))
+
+        balance, reserved = await asyncio.gather(balance_task, reserved_task)
+
+        return UserCreditInfo(
+            balance=balance,
+            reserved=reserved,
+            available=balance - reserved,
+        )
+
     # Transaction / ledger operations
     async def add_transaction(self, tx: Transaction) -> Transaction:
         col = self._db[Transaction.collection_name]
@@ -170,6 +190,14 @@ class MongoDBManager(BaseDBManager):
             for d in docs
             if d is not None
         ]  # type: ignore[list-item]
+
+    async def get_reserved_credits_for_user(self, user_id: str) -> int:
+        col = self._db[ReservedCredits.collection_name]
+        cursor = col.find(
+            {"user_id": user_id, "committed": False, "released": False}
+        )
+        docs = await cursor.to_list(length=None)
+        return sum(d.get("credits", 0) for d in docs)
 
     # Subscription operations
     async def add_subscription_plan(

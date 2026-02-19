@@ -8,6 +8,7 @@ from ..db.base import BaseDBManager
 from ..logging.ledger_logger import LedgerLogger
 from ..models.credits import CreditExpiryRecord, ReservedCredits
 from ..models.transaction import Transaction, TransactionType
+from ..models.user import UserCreditInfo
 
 
 class CreditService:
@@ -96,17 +97,22 @@ class CreditService:
             raise ValueError("amount must be positive")
 
         async with self._db.transaction():
-            current = await self._db.get_user_credits(user_id)
-            if current < amount:
+            credit_info = await self._db.get_user_credits_info(user_id)
+            if credit_info.available < amount:
                 await self._ledger.log_error(
                     message="Insufficient credits for deduction",
-                    details={"requested": amount, "current": current},
+                    details={
+                        "requested": amount,
+                        "balance": credit_info.balance,
+                        "reserved": credit_info.reserved,
+                        "available": credit_info.available,
+                    },
                     user_id=user_id,
                     correlation_id=correlation_id,
                 )
                 raise ValueError("insufficient credits")
 
-            new_balance = current - amount
+            new_balance = credit_info.balance - amount
 
             tx = Transaction(
                 user_id=user_id,
@@ -186,6 +192,7 @@ class CreditService:
         return expired_total
 
     async def get_user_credits(self, user_id: str) -> int:
+        """Get user's total credit balance (backward compatible)."""
         if self._cache:
             cached = await self._cache.get(self._user_credits_cache_key(user_id))
             if isinstance(cached, int):
@@ -194,6 +201,13 @@ class CreditService:
         if self._cache:
             await self._cache.set(self._user_credits_cache_key(user_id), balance)
         return balance
+
+    async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
+        """
+        Get balance, reserved, and available credits in a single optimized call.
+        This is more efficient than calling get_user_credits + get_reserved_credits separately.
+        """
+        return await self._db.get_user_credits_info(user_id)
 
     async def get_credit_history(self, user_id: str) -> Iterable[Transaction]:
         return await self._db.get_transactions(user_id)
@@ -230,11 +244,16 @@ class CreditService:
             raise ValueError("amount must be positive")
 
         async with self._db.transaction():
-            current = await self._db.get_user_credits(user_id)
-            if current < amount:
+            credit_info = await self._db.get_user_credits_info(user_id)
+            if credit_info.available < amount:
                 await self._ledger.log_error(
                     message="Insufficient credits for reservation",
-                    details={"requested": amount, "current": current},
+                    details={
+                        "requested": amount,
+                        "balance": credit_info.balance,
+                        "reserved": credit_info.reserved,
+                        "available": credit_info.available,
+                    },
                     user_id=user_id,
                     correlation_id=correlation_id,
                 )

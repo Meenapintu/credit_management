@@ -3,9 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import ClassVar, Optional
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .base import DBSerializableModel
+
+
+class UserCreditInfo(BaseModel):
+    """Credit information returned in a single optimized query."""
+
+    balance: int = Field(description="Total credits balance (from transactions)")
+    reserved: int = Field(description="Credits currently reserved (not committed/released)")
+    available: int = Field(description="Available credits (balance - reserved)")
 
 
 class UserAccount(DBSerializableModel):
