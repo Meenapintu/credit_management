@@ -53,11 +53,11 @@ async def main():
 
     # 2. Use the service
     await credit_svc.add_credits("user-1", 100, description="Sign-up bonus")
-    balance = await credit_svc.get_user_credits("user-1")
+    balance = await credit_svc.get_user_credits_info("user-1")
     print(f"User-1 balance: {balance}")
 
     await credit_svc.deduct_credits("user-1", 30, description="Used for service X")
-    balance = await credit_svc.get_user_credits("user-1")
+    balance = await credit_svc.get_user_credits_info("user-1")
     print(f"User-1 balance after deduction: {balance}")
 
 if __name__ == "__main__":
