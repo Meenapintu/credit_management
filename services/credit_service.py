@@ -302,7 +302,8 @@ class CreditService:
         # Aggregate all active reservations for the user
         # This is computed from ReservedCredits records.
         # A dedicated DB query/index would be better in production.
-        total = 0
+        total =await  self._db.get_reserved_credits_for_user(user_id)
+
         # Fallback: iterate over all plans; concrete DB backends can implement
         # a more efficient method if needed.
         # For now, reuse plan-scoped fetch and filter by user.
