@@ -1,4 +1,12 @@
-# Credit Management — Plug-and-Play Credits & Subscriptions
+<h1 align="center">
+ Credit Management — Plug-and-Play Credits & Subscriptions
+ </h1>
+
+<p align="center">
+  <img alt="Static Badge" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge">
+<img alt="Static Badge" src="https://img.shields.io/badge/python-3670A0?style=for-the-badge">
+</p>
+
 
 **Production-ready, database-agnostic credit and subscription management for any Python service or API.**
 
