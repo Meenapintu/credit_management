@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Credit_Management"
+version = "0.3.0"
+authors = [
+  { name="Pintu Lal", email="pintulalmee@gmail.com" },
+]
+description = "A credit management system."
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/Meenapintu/credit_management"
+"Documentation" = "https://github.com/Meenapintu/credit_management"
+"Bug Tracker" = "https://github.com/Meenapintu/credit_management/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
