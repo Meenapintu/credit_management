@@ -57,7 +57,7 @@ pip install fastapi pydantic motor  # motor only if using MongoDB
 
 ```python
 from fastapi import FastAPI
-from app.credit_management.api.router import router as credit_router
+from credit_management.api.router import router as credit_router
 
 app = FastAPI()
 app.include_router(credit_router)  # prefix is /credits
@@ -103,11 +103,11 @@ If the response has no usage key or the request fails, only the reservation is r
 
 ```python
 from fastapi import FastAPI
-from app.credit_management.api.middleware import CreditDeductionMiddleware
-from app.credit_management.api.router import _create_db_manager
-from app.credit_management.services.credit_service import CreditService
-from app.credit_management.logging.ledger_logger import LedgerLogger
-from app.credit_management.cache.memory import InMemoryAsyncCache
+from credit_management.api.middleware import CreditDeductionMiddleware
+from credit_management.api.router import _create_db_manager
+from credit_management.services.credit_service import CreditService
+from credit_management.logging.ledger_logger import LedgerLogger
+from credit_management.cache.memory import InMemoryAsyncCache
 from pathlib import Path
 
 app = FastAPI()
@@ -153,11 +153,11 @@ Instantiate a DB manager, ledger, optional cache/queue, then the services:
 
 ```python
 from pathlib import Path
-from app.credit_management.db.memory import InMemoryDBManager
-# or: from app.credit_management.db.mongo import MongoDBManager
-from app.credit_management.logging.ledger_logger import LedgerLogger
-from app.credit_management.services.credit_service import CreditService
-from app.credit_management.services.subscription_service import SubscriptionService
+from credit_management.db.memory import InMemoryDBManager
+# or: from credit_management.db.mongo import MongoDBManager
+from credit_management.logging.ledger_logger import LedgerLogger
+from credit_management.services.credit_service import CreditService
+from credit_management.services.subscription_service import SubscriptionService
 
 # Pick your backend
 db = InMemoryDBManager()
@@ -169,7 +169,7 @@ sub_svc = SubscriptionService(db=db, ledger=ledger)
 
 # Use in your app (e.g. Celery, Django, Flask, another FastAPI app)
 await credit_svc.add_credits("user-1", 100, description="Sign-up bonus")
-balance = await credit_svc.get_user_credits("user-1")
+balance = await credit_svc.get_user_credits_info("user-1")
 ```
 
 You can pass an optional **cache** (`AsyncCacheBackend`) and, for notifications, a **queue** (`AsyncNotificationQueue`) to the relevant services for better performance and decoupled alerts.
@@ -189,7 +189,7 @@ Leave `CREDIT_MONGO_URI` unset to use in-memory storage.
 
 ### Run unit tests (pytest + asyncio)
 
-From the **app** directory (so `app.credit_management` resolves):
+From the **app** directory (so `credit_management` resolves):
 
 ```bash
 cd /path/to/your/app
@@ -203,9 +203,9 @@ Tests use the in-memory DB and cache; no MongoDB or external services required.
 
 ```python
 import pytest
-from app.credit_management.db.memory import InMemoryDBManager
-from app.credit_management.logging.ledger_logger import LedgerLogger
-from app.credit_management.services.credit_service import CreditService
+from credit_management.db.memory import InMemoryDBManager
+from credit_management.logging.ledger_logger import LedgerLogger
+from credit_management.services.credit_service import CreditService
 
 @pytest.mark.asyncio
 async def test_add_and_deduct_credits(tmp_path):
@@ -213,9 +213,9 @@ async def test_add_and_deduct_credits(tmp_path):
     ledger = LedgerLogger(db=db, file_path=tmp_path / "ledger.log")
     service = CreditService(db=db, ledger=ledger)
     await service.add_credits("user-1", 100)
-    assert await service.get_user_credits("user-1") == 100
+    assert await service.get_user_credits_info("user-1").available == 100
     await service.deduct_credits("user-1", 40)
-    assert await service.get_user_credits("user-1") == 60
+    assert await service.get_user_credits_info("user-1").available == 60
 ```
 
 ---
@@ -226,8 +226,8 @@ Generate SQL or NoSQL schema from the Pydantic models (e.g. for migrations or co
 
 ```bash
 # From repo root, with app on PYTHONPATH
-python -m app.credit_management.schema_generator --backend sql --dialect postgres
-python -m app.credit_management.schema_generator --backend nosql
+python -m credit_management.schema_generator --backend sql --dialect postgres
+python -m credit_management.schema_generator --backend nosql
 ```
 
 Add a new field to a model → run the generator again to update DDL/validators.

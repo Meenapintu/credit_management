@@ -20,7 +20,6 @@ from ..services.subscription_service import SubscriptionService
 from ..services.expiration_service import ExpirationService
 from ..models.subscription import SubscriptionPlan
 
-from config import settings
 
 
 
@@ -64,7 +63,7 @@ class SubscriptionPlanResponse(BaseModel):
 
 def _create_db_manager() -> BaseDBManager:
     
-    mongo_uri = settings.MONGO_URI if settings.MONGO_URI else os.getenv("CREDIT_MONGO_URI")
+    mongo_uri = os.getenv("CREDIT_MONGO_URI")
     mongo_db = os.getenv("CREDIT_MONGO_DB", "credit_management")
     if mongo_uri and MongoDBManager is not None:
         return MongoDBManager.from_client_uri(mongo_uri, mongo_db)  # type: ignore[call-arg]
