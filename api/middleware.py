@@ -143,7 +143,9 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
                     actual = int(raw)
                     if actual > 0:
                         await self.credit_service.unreserve_credits(reservation)
-                        await self.credit_service.deduct_credits(
+                        # Use deduct_credits_after_service to allow negative balance
+                        # (actual usage may exceed reserved amount)
+                        await self.credit_service.deduct_credits_after_service(
                             user_id=user_id,
                             amount=actual,
                             description="api-middleware",

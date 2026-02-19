@@ -97,6 +97,10 @@ class CreditService:
         description: str | None = None,
         correlation_id: str | None = None,
     ) -> Transaction:
+        """
+        Deduct credits from user account. Raises ValueError if insufficient credits.
+        Use this for pre-service checks where you need to ensure sufficient balance.
+        """
         if amount <= 0:
             raise ValueError("amount must be positive")
 
@@ -116,37 +120,87 @@ class CreditService:
                 )
                 raise ValueError("insufficient credits")
 
-            new_balance = credit_info.balance - amount
-
-            tx = Transaction(
+            return await self._deduct_credits_internal(
                 user_id=user_id,
-                credits_added=0,
-                credits_deducted=amount,
-                current_credits=new_balance,
-                transaction_type=TransactionType.DEDUCT,
+                amount=amount,
+                current_balance=credit_info.balance,
                 description=description,
-            )
-            tx = await self._db.add_transaction(tx)
-
-            await self._ledger.log_transaction(
-                user_id=user_id,
-                message="Credits deducted",
-                details={
-                    "amount": amount,
-                    "new_balance": new_balance,
-                    "description": description or "",
-                },
                 correlation_id=correlation_id,
             )
 
-            if self._cache:
-                await self._cache.set(self._user_credits_cache_key(user_id), new_balance)
-                # Update credit info cache: balance decreased, reserved unchanged
-                await self._update_credit_info_cache(
-                    user_id, balance_delta=-amount, reserved_delta=0
-                )
+    async def deduct_credits_after_service(
+        self,
+        user_id: str,
+        amount: int,
+        description: str | None = None,
+        correlation_id: str | None = None,
+    ) -> Transaction:
+        """
+        Deduct credits after service execution. Allows balance to go negative.
+        
+        Use this when deducting actual usage after a service has run, where the
+        actual cost may exceed the reserved amount. The balance can go negative
+        to track overage/overdraft.
+        
+        Example: Middleware reserved 50 credits, but actual API usage was 60.
+        This method allows deducting 60 even if only 50 was reserved.
+        """
+        if amount <= 0:
+            raise ValueError("amount must be positive")
 
-            return tx
+        async with self._db.transaction():
+            credit_info = await self._db.get_user_credits_info(user_id)
+            return await self._deduct_credits_internal(
+                user_id=user_id,
+                amount=amount,
+                current_balance=credit_info.balance,
+                description=description,
+                correlation_id=correlation_id,
+            )
+
+    async def _deduct_credits_internal(
+        self,
+        user_id: str,
+        amount: int,
+        current_balance: int,
+        description: str | None = None,
+        correlation_id: str | None = None,
+    ) -> Transaction:
+        """
+        Internal method that performs the actual deduction logic.
+        Shared by deduct_credits and deduct_credits_after_service.
+        """
+        new_balance = current_balance - amount
+
+        tx = Transaction(
+            user_id=user_id,
+            credits_added=0,
+            credits_deducted=amount,
+            current_credits=new_balance,
+            transaction_type=TransactionType.DEDUCT,
+            description=description,
+        )
+        tx = await self._db.add_transaction(tx)
+
+        await self._ledger.log_transaction(
+            user_id=user_id,
+            message="Credits deducted",
+            details={
+                "amount": amount,
+                "new_balance": new_balance,
+                "description": description or "",
+            },
+            correlation_id=correlation_id,
+        )
+
+        if self._cache:
+            await self._cache.set(self._user_credits_cache_key(user_id), new_balance)
+            # Update credit info cache: balance decreased, reserved unchanged
+            await self._update_credit_info_cache(
+                user_id, balance_delta=-amount, reserved_delta=0
+            )
+
+        return tx
 
     async def expire_credits(
         self,
@@ -203,16 +257,7 @@ class CreditService:
 
         return expired_total
 
-    async def get_user_credits(self, user_id: str) -> int:
-        """Get user's total credit balance (backward compatible)."""
-        if self._cache:
-            cached = await self._cache.get(self._user_credits_cache_key(user_id))
-            if isinstance(cached, int):
-                return cached
-        balance = await self._db.get_user_credits(user_id)
-        if self._cache:
-            await self._cache.set(self._user_credits_cache_key(user_id), balance)
-        return balance
+
 
     async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
         """

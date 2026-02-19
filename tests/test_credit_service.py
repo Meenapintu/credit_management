@@ -111,3 +111,29 @@ async def test_credit_info_cache_update(tmp_path):
     assert info6.balance == 70
     assert info6.reserved == 0
     assert info6.available == 70
+
+
+@pytest.mark.asyncio
+async def test_deduct_credits_after_service_allows_negative(tmp_path):
+    """Verify deduct_credits_after_service allows balance to go negative."""
+    db = InMemoryDBManager()
+    ledger = LedgerLogger(db=db, file_path=tmp_path / "ledger.log")
+    service = CreditService(db=db, ledger=ledger)
+
+    user_id = "user-1"
+    await service.add_credits(user_id=user_id, amount=50)
+    assert await service.get_user_credits(user_id) == 50
+
+    # Regular deduct_credits should fail if insufficient
+    with pytest.raises(ValueError, match="insufficient credits"):
+        await service.deduct_credits(user_id=user_id, amount=60)
+
+    # deduct_credits_after_service should allow negative balance
+    tx = await service.deduct_credits_after_service(user_id=user_id, amount=60)
+    assert tx.current_credits == -10
+    assert await service.get_user_credits(user_id) == -10
+
+    # Can go even more negative
+    tx2 = await service.deduct_credits_after_service(user_id=user_id, amount=20)
+    assert tx2.current_credits == -30
+    assert await service.get_user_credits(user_id) == -30
