@@ -83,6 +83,10 @@ class CreditService:
             # Cache update
             if self._cache:
                 await self._cache.set(self._user_credits_cache_key(user_id), new_balance)
+                # Update credit info cache: balance increased, reserved unchanged
+                await self._update_credit_info_cache(
+                    user_id, balance_delta=amount, reserved_delta=0
+                )
 
             return tx
 
@@ -137,6 +141,10 @@ class CreditService:
 
             if self._cache:
                 await self._cache.set(self._user_credits_cache_key(user_id), new_balance)
+                # Update credit info cache: balance decreased, reserved unchanged
+                await self._update_credit_info_cache(
+                    user_id, balance_delta=-amount, reserved_delta=0
+                )
 
             return tx
 
@@ -188,6 +196,10 @@ class CreditService:
                     await self._cache.set(
                         self._user_credits_cache_key(user_id), new_balance
                     )
+                    # Update credit info cache: balance decreased by expired_total, reserved unchanged
+                    await self._update_credit_info_cache(
+                        user_id, balance_delta=-expired_total, reserved_delta=0
+                    )
 
         return expired_total
 
@@ -205,9 +217,29 @@ class CreditService:
     async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
         """
         Get balance, reserved, and available credits in a single optimized call.
+        
+        Primary source: cache (updated on every credit modification).
+        Fallback: DB (only if cache is missing or corrupted).
+        
         This is more efficient than calling get_user_credits + get_reserved_credits separately.
         """
-        return await self._db.get_user_credits_info(user_id)
+        cache_key = self._user_credits_info_cache_key(user_id)
+        if self._cache:
+            cached = await self._cache.get(cache_key)
+            if isinstance(cached, dict):
+                try:
+                    return UserCreditInfo.model_validate(cached)
+                except Exception:
+                    # Cache corrupted, delete it and fetch from DB
+                    await self._cache.delete(cache_key)
+
+        # Cache miss or corrupted - fetch from DB and populate cache
+        info = await self._db.get_user_credits_info(user_id)
+        if self._cache:
+            await self._cache.set(
+                cache_key, info.model_dump(), ttl_seconds=300
+            )
+        return info
 
     async def get_credit_history(self, user_id: str) -> Iterable[Transaction]:
         return await self._db.get_transactions(user_id)
@@ -274,6 +306,12 @@ class CreditService:
                 correlation_id=correlation_id,
             )
 
+            if self._cache:
+                # Update credit info cache: balance unchanged, reserved increased
+                await self._update_credit_info_cache(
+                    user_id, balance_delta=0, reserved_delta=amount
+                )
+
             return reserved
 
     async def unreserve_credits(
@@ -288,6 +326,13 @@ class CreditService:
             details={"reservation_id": reservation.id, "credits": reservation.credits},
             correlation_id=correlation_id,
         )
+
+        if self._cache:
+            # Update credit info cache: balance unchanged, reserved decreased
+            await self._update_credit_info_cache(
+                reservation.user_id, balance_delta=0, reserved_delta=-reservation.credits
+            )
+
         return reservation
 
     async def commit_reserved_credits(
@@ -340,10 +385,58 @@ class CreditService:
                 await self._cache.set(
                     self._user_credits_cache_key(reservation.user_id), new_balance
                 )
+                # Update credit info cache: balance decreased, reserved decreased (reservation committed)
+                await self._update_credit_info_cache(
+                    reservation.user_id,
+                    balance_delta=-reservation.credits,
+                    reserved_delta=-reservation.credits,
+                )
 
             return tx
 
     @staticmethod
     def _user_credits_cache_key(user_id: str) -> str:
         return f"credit:user:{user_id}:balance"
+
+    @staticmethod
+    def _user_credits_info_cache_key(user_id: str) -> str:
+        return f"credit:user:{user_id}:info"
+
+    async def _update_credit_info_cache(
+        self, user_id: str, balance_delta: int, reserved_delta: int
+    ) -> None:
+        """
+        Update the cached credit info by applying deltas.
+        If cache is missing or corrupted, it will be refreshed on next get_user_credits_info call.
+        """
+        if not self._cache:
+            return
+
+        cache_key = self._user_credits_info_cache_key(user_id)
+        cached = await self._cache.get(cache_key)
+
+        if isinstance(cached, dict):
+            try:
+                current_info = UserCreditInfo.model_validate(cached)
+                updated_info = UserCreditInfo(
+                    balance=current_info.balance + balance_delta,
+                    reserved=current_info.reserved + reserved_delta,
+                    available=(current_info.balance + balance_delta)
+                    - (current_info.reserved + reserved_delta),
+                )
+                await self._cache.set(
+                    cache_key, updated_info.model_dump(), ttl_seconds=300
+                )
+                return
+            except Exception:
+                # Cache corrupted, delete it - will be refreshed on next call
+                await self._cache.delete(cache_key)
+
+    async def _invalidate_credit_info_cache(self, user_id: str) -> None:
+        """
+        Invalidate the cached credit info for a user.
+        Kept as fallback, but _update_credit_info_cache is preferred.
+        """
+        if self._cache:
+            await self._cache.delete(self._user_credits_info_cache_key(user_id))
 

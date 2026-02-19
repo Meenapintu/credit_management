@@ -53,3 +53,61 @@ async def test_no_overspend_when_reserving(tmp_path):
 
     with pytest.raises(ValueError, match="insufficient credits"):
         await service.reserve_credits(user_id=user_id, amount=10)
+
+
+@pytest.mark.asyncio
+async def test_credit_info_cache_update(tmp_path):
+    """Verify that credit info cache is updated (not just invalidated) on all credit modifications."""
+    db = InMemoryDBManager()
+    ledger = LedgerLogger(db=db, file_path=tmp_path / "ledger.log")
+    cache = InMemoryAsyncCache()
+    service = CreditService(db=db, ledger=ledger, cache=cache)
+
+    user_id = "user-1"
+
+    # Initial state - no cache, fetches from DB
+    info1 = await service.get_user_credits_info(user_id)
+    assert info1.balance == 0
+    assert info1.reserved == 0
+    assert info1.available == 0
+
+    # Add credits - cache should be updated directly (balance +100, reserved unchanged)
+    await service.add_credits(user_id=user_id, amount=100)
+    # This call should return from cache (no DB call)
+    info2 = await service.get_user_credits_info(user_id)
+    assert info2.balance == 100
+    assert info2.reserved == 0
+    assert info2.available == 100
+
+    # Reserve credits - cache should be updated directly (balance unchanged, reserved +30)
+    r1 = await service.reserve_credits(user_id=user_id, amount=30)
+    # This call should return from cache (no DB call)
+    info3 = await service.get_user_credits_info(user_id)
+    assert info3.balance == 100
+    assert info3.reserved == 30
+    assert info3.available == 70
+
+    # Deduct credits - cache should be updated directly (balance -20, reserved unchanged)
+    await service.deduct_credits(user_id=user_id, amount=20)
+    # This call should return from cache (no DB call)
+    info4 = await service.get_user_credits_info(user_id)
+    assert info4.balance == 80
+    assert info4.reserved == 30
+    assert info4.available == 50
+
+    # Unreserve credits - cache should be updated directly (balance unchanged, reserved -30)
+    await service.unreserve_credits(r1)
+    # This call should return from cache (no DB call)
+    info5 = await service.get_user_credits_info(user_id)
+    assert info5.balance == 80
+    assert info5.reserved == 0
+    assert info5.available == 80
+
+    # Reserve and commit - cache should be updated directly (balance -10, reserved -10)
+    r2 = await service.reserve_credits(user_id=user_id, amount=10)
+    await service.commit_reserved_credits(r2)
+    # This call should return from cache (no DB call)
+    info6 = await service.get_user_credits_info(user_id)
+    assert info6.balance == 70
+    assert info6.reserved == 0
+    assert info6.available == 70
