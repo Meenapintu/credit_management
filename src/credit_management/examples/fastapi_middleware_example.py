@@ -8,7 +8,7 @@ Example: FastAPI app with credit deduction middleware.
 - Response includes X-Credits-Deducted when credits were deducted.
 
 Run (from app directory, with credits and DB set up):
-  uvicorn app.credit_management.examples.fastapi_middleware_example:app --reload
+  uvicorn credit_management.examples.fastapi_middleware_example:app --reload
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ import sys
 # Ensure app is on path when running this example
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.credit_management.api.middleware import CreditDeductionMiddleware
-from app.credit_management.api.router import _create_db_manager
-from app.credit_management.cache.memory import InMemoryAsyncCache
-from app.credit_management.logging.ledger_logger import LedgerLogger
-from app.credit_management.services.credit_service import CreditService
+from credit_management.api.middleware import CreditDeductionMiddleware
+from credit_management.api.router import _create_db_manager
+from credit_management.cache.memory import InMemoryAsyncCache
+from credit_management.logging.ledger_logger import LedgerLogger
+from credit_management.services.credit_service import CreditService
 
 
 def _get_credit_service():
@@ -86,4 +86,4 @@ async def balance(user_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.credit_management.examples.fastapi_middleware_example:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("credit_management.examples.fastapi_middleware_example:app", host="0.0.0.0", port=8000, reload=True)

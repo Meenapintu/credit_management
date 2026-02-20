@@ -3,8 +3,14 @@
  </h1>
 
 <p align="center">
-  <img alt="Static Badge" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge">
-<img alt="Static Badge" src="https://img.shields.io/badge/python-3670A0?style=for-the-badge">
+  <img alt="Static Badge" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge&color=00AA00">
+<img alt="PyPI - Python Version" src="https://img.shields.io/pypi/pyversions/Credit-Management?style=for-the-badge&labelColor=00AA00">
+<img alt="PyPI - Implementation" src="https://img.shields.io/pypi/implementation/Credit-Management?style=for-the-badge"><img alt="PyPI - Wheel" src="https://img.shields.io/pypi/wheel/Credit-Management?style=for-the-badge">
+<img alt="PyPI - Downloads" src="https://img.shields.io/pypi/dd/Credit-Management?style=for-the-badge">
+<img alt="PyPI - Version" src="https://img.shields.io/pypi/v/Credit-Management?style=for-the-badge">
+<img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/meenapintu/credit_management/pypi-package.yml?style=for-the-badge">
+<img alt="PyPI - License" src="https://img.shields.io/pypi/l/Credit-Management?style=for-the-badge">
+
 </p>
 
 
@@ -45,6 +51,20 @@ Manage user credits, subscriptions, expirations, reservations, and notifications
 ## Quick Start
 
 ### 1. Install
+
+
+## Installation
+
+Install the package from PyPI:
+
+```bash
+pip install Credit-Management
+```
+
+Depending on your use case, you might need to install extra dependencies:
+- If you are using the FastAPI router, install `fastapi`.
+- If you are using the MongoDB backend, install `motor`.
+
 
 From your app (or repo) root:
 
@@ -233,11 +253,17 @@ python -m credit_management.schema_generator --backend nosql
 Add a new field to a model → run the generator again to update DDL/validators.
 
 ---
+More Example: <
+[src/examples/](src/examples/)  ||
+[PypiReadMe.md](PypiReadMe.md) >
+
+
+---
 
 ## Project layout
 
 ```
-app/credit_management/
+credit_management/
 ├── README.md                 # This file
 ├── __init__.py
 ├── schema_generator.py       # CLI: generate SQL/NoSQL schema from models
