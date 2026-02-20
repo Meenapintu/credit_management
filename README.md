@@ -14,6 +14,7 @@
 </p>
 
 
+
 **Production-ready, database-agnostic credit and subscription management for any Python service or API.**
 
 Manage user credits, subscriptions, expirations, reservations, and notifications with a single, pluggable module. No lock-in: use **in-memory** for development, **MongoDB** for scale, or plug in your own SQL/NoSQL backend.
@@ -254,8 +255,8 @@ Add a new field to a model → run the generator again to update DDL/validators.
 
 ---
 More Example: <
-[src/examples/](src/examples/)  ||
-[PypiReadMe.md](PypiReadMe.md) >
+[src/examples/](https://github.com/Meenapintu/credit_management/tree/main/src/credit_management/examples)  ||
+[PypiReadMe.md](https://github.com/Meenapintu/credit_management/blob/main/pypiReadMe.md) >
 
 
 ---

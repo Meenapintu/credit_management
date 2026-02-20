@@ -31,8 +31,8 @@ class NotificationService:
         self._low_credit_threshold = low_credit_threshold
 
     async def notify_low_credits(self, user_id: str) -> None:
-        current = await self._credit_service.get_user_credits(user_id)
-        if current > self._low_credit_threshold:
+        current = await self._credit_service.get_user_credits_info(user_id)
+        if current.available > self._low_credit_threshold:
             return
 
         event = NotificationEvent(

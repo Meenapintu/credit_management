@@ -20,14 +20,14 @@ async def test_add_and_deduct_credits(tmp_path):
     tx_add = await service.add_credits(user_id=user_id, amount=100)
     assert tx_add.current_credits == 100
 
-    balance = await service.get_user_credits(user_id)
-    assert balance == 100
+    balance = await service.get_user_credits_info(user_id)
+    assert balance.balance == 100
 
     tx_deduct = await service.deduct_credits(user_id=user_id, amount=40)
     assert tx_deduct.current_credits == 60
 
-    balance_after = await service.get_user_credits(user_id)
-    assert balance_after == 60
+    balance_after = await service.get_user_credits_info(user_id)
+    assert balance_after.balance == 60
 
 
 @pytest.mark.asyncio
@@ -39,7 +39,7 @@ async def test_no_overspend_when_reserving(tmp_path):
 
     user_id = "user-1"
     await service.add_credits(user_id=user_id, amount=60)
-    assert await service.get_user_credits(user_id) == 60
+    assert (await service.get_user_credits_info(user_id)).balance == 60
 
     r1 = await service.reserve_credits(user_id=user_id, amount=50)
     assert r1.credits == 50
@@ -122,18 +122,18 @@ async def test_deduct_credits_after_service_allows_negative(tmp_path):
 
     user_id = "user-1"
     await service.add_credits(user_id=user_id, amount=50)
-    assert await service.get_user_credits(user_id) == 50
+    assert (await service.get_user_credits_info(user_id)).balance == 50
 
     # Regular deduct_credits should fail if insufficient
     with pytest.raises(ValueError, match="insufficient credits"):
-        await service.deduct_credits(user_id=user_id, amount=60)
+        await service.get_user_credits_info(user_id=user_id, amount=60)
 
     # deduct_credits_after_service should allow negative balance
     tx = await service.deduct_credits_after_service(user_id=user_id, amount=60)
     assert tx.current_credits == -10
-    assert await service.get_user_credits(user_id) == -10
+    assert (await service.get_user_credits_info(user_id)).balance == -10
 
     # Can go even more negative
     tx2 = await service.deduct_credits_after_service(user_id=user_id, amount=20)
     assert tx2.current_credits == -30
-    assert await service.get_user_credits(user_id) == -30
+    assert (await service.get_user_credits_info(user_id)).balance == -30

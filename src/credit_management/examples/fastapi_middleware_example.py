@@ -80,10 +80,11 @@ async def health():
 # Optional: expose credit balance so clients can check before calling
 @app.get("/api/balance/{user_id}")
 async def balance(user_id: str):
-    bal = await credit_service.get_user_credits(user_id)
+    bal = await credit_service.get_user_credits_info(user_id)
     return {"user_id": user_id, "credits": bal}
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("credit_management.examples.fastapi_middleware_example:app", host="0.0.0.0", port=8000, reload=True)
