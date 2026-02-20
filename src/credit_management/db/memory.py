@@ -17,17 +17,27 @@ class InMemoryDBManager(BaseDBManager):
     Simple in-memory implementation used for tests and local development.
     NOT suitable for production, but exercises the abstraction and services.
     """
+    _instance = None
+    _initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self) -> None:
-        self._users: Dict[str, UserAccount] = {}
-        self._transactions: Dict[str, Transaction] = {}
-        self._expiry_records: List[CreditExpiryRecord] = []
-        self._reserved: List[ReservedCredits] = []
-        self._plans: Dict[str, SubscriptionPlan] = {}
-        self._user_subscriptions: Dict[str, UserSubscription] = {}
-        self._notifications: List[NotificationEvent] = []
-        self._ledger: List[LedgerEntry] = []
-        self._id_counter: int = 0
+        # Prevents re-initialization on subsequent calls
+        if not self._initialized:
+            self._initialized = True
+            self._users: Dict[str, UserAccount] = {}
+            self._transactions: Dict[str, Transaction] = {}
+            self._expiry_records: List[CreditExpiryRecord] = []
+            self._reserved: List[ReservedCredits] = []
+            self._plans: Dict[str, SubscriptionPlan] = {}
+            self._user_subscriptions: Dict[str, UserSubscription] = {}
+            self._notifications: List[NotificationEvent] = []
+            self._ledger: List[LedgerEntry] = []
+            self._id_counter: int = 0
 
     def _next_id(self) -> str:
         self._id_counter += 1
