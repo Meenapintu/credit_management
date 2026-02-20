@@ -82,7 +82,6 @@ class CreditService:
 
             # Cache update
             if self._cache:
-                await self._cache.set(self._user_credits_cache_key(user_id), new_balance)
                 # Update credit info cache: balance increased, reserved unchanged
                 await self._update_credit_info_cache(
                     user_id, balance_delta=amount, reserved_delta=0
@@ -194,7 +193,6 @@ class CreditService:
         )
 
         if self._cache:
-            await self._cache.set(self._user_credits_cache_key(user_id), new_balance)
             # Update credit info cache: balance decreased, reserved unchanged
             await self._update_credit_info_cache(
                 user_id, balance_delta=-amount, reserved_delta=0
@@ -247,9 +245,6 @@ class CreditService:
                 )
 
                 if self._cache:
-                    await self._cache.set(
-                        self._user_credits_cache_key(user_id), new_balance
-                    )
                     # Update credit info cache: balance decreased by expired_total, reserved unchanged
                     await self._update_credit_info_cache(
                         user_id, balance_delta=-expired_total, reserved_delta=0
@@ -335,7 +330,11 @@ class CreditService:
                     user_id=user_id,
                     correlation_id=correlation_id,
                 )
-                raise ValueError("insufficient credits for reservation")
+                raise ValueError(f"""insufficient credits for reservation 
+                        "requested":{amount} ,
+                        "balance": {credit_info.balance},
+                        "reserved": {credit_info.reserved},
+                        "available": {credit_info.available}""")
 
             reserved = ReservedCredits(
                 user_id=user_id,
@@ -428,9 +427,6 @@ class CreditService:
             )
 
             if self._cache:
-                await self._cache.set(
-                    self._user_credits_cache_key(reservation.user_id), new_balance
-                )
                 # Update credit info cache: balance decreased, reserved decreased (reservation committed)
                 await self._update_credit_info_cache(
                     reservation.user_id,
@@ -439,10 +435,6 @@ class CreditService:
                 )
 
             return tx
-
-    @staticmethod
-    def _user_credits_cache_key(user_id: str) -> str:
-        return f"credit:user:{user_id}:balance"
 
     @staticmethod
     def _user_credits_info_cache_key(user_id: str) -> str:
