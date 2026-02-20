@@ -20,44 +20,16 @@ from ..services.notification_service import NotificationService
 from ..services.subscription_service import SubscriptionService
 from ..services.expiration_service import ExpirationService
 from ..models.subscription import SubscriptionPlan
+from ..models.api_models import (
+    AddCreditsRequest,
+    CreditBalanceResponse,
+    DeductCreditsRequest,
+    SubscriptionPlanRequest,
+    SubscriptionPlanResponse,
+)
 
 
 router = APIRouter(prefix="/credits", tags=["credits"])
-
-
-class AddCreditsRequest(BaseModel):
-    user_id: str
-    amount: int
-    description: str | None = None
-
-
-class DeductCreditsRequest(BaseModel):
-    user_id: str
-    amount: int
-    description: str | None = None
-
-
-class CreditBalanceResponse(BaseModel):
-    user_id: str
-    credits: int
-
-
-class SubscriptionPlanRequest(BaseModel):
-    name: str
-    description: str | None = None
-    credit_limit: int
-    price: float
-    billing_period: str
-    validity_days: int
-
-
-class SubscriptionPlanResponse(BaseModel):
-    id: str
-    name: str
-    credit_limit: int
-    price: float
-    billing_period: str
-    validity_days: int
 
 
 def _create_db_manager() -> BaseDBManager:
