@@ -77,9 +77,7 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
                 return False
         return True
 
-    async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Any]
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
         if not self._should_apply(request.url.path):
             return await call_next(request)
 
@@ -112,7 +110,7 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     status_code=402,
                     content={
-                        "detail": "Insufficient credits for this request.",
+                        "detail": f"""{ str(e)}""",
                         "code": "INSUFFICIENT_CREDITS",
                     },
                 )
@@ -126,50 +124,36 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
             await self.credit_service.unreserve_credits(reservation)
             raise
 
-        body_bytes: Optional[bytes] = None
-        try:
-            body_bytes = getattr(response, "body", None)
-            if body_bytes is None and hasattr(response, "body_iterator"):
-                body_bytes = b"".join([chunk async for chunk in response.body_iterator])
-        except Exception:
-            body_bytes = None
-
         deducted = 0
         try:
-            if body_bytes:
-                data = json.loads(body_bytes)
-                raw = _get_nested(data, self.response_usage_key)
-                if raw is not None:
-                    actual = int(raw)
-                    if actual > 0:
-                        await self.credit_service.unreserve_credits(reservation)
-                        # Use deduct_credits_after_service to allow negative balance
-                        # (actual usage may exceed reserved amount)
-                        await self.credit_service.deduct_credits_after_service(
-                            user_id=user_id,
-                            amount=actual,
-                            description="api-middleware",
-                            correlation_id=request.headers.get("X-Request-Id"),
-                        )
-                        deducted = actual
+            usages_raw = response.headers.get(self.response_usage_key)
+            actual = int(usages_raw) if usages_raw is not None else 0
+            if actual > 0:
+                await self.credit_service.unreserve_credits(reservation)
+                # Use deduct_credits_after_service to allow negative balance
+                # (actual usage may exceed reserved amount)
+                await self.credit_service.deduct_credits_after_service(
+                    user_id=user_id,
+                    amount=actual,
+                    description="api-middleware",
+                    correlation_id=request.headers.get("X-Request-Id"),
+                )
+                deducted = actual
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             logger.warning(
                 "Credit middleware: could not read usage from response: %s",
                 e,
                 extra={"path": request.url.path, "user_id": user_id},
             )
+        except Exception:
+            logger.warning(
+                "Credit middleware: could not read usage from response: %s",
+                e,
+                extra={"path": request.url.path, "user_id": user_id},
+            )
+
         finally:
             if deducted == 0:
                 await self.credit_service.unreserve_credits(reservation)
-
-        if body_bytes is not None:
-            headers = dict(response.headers)
-            if deducted > 0:
-                headers["X-Credits-Deducted"] = str(deducted)
-            return Response(
-                content=body_bytes,
-                status_code=response.status_code,
-                headers=headers,
-                media_type=getattr(response, "media_type", "application/json"),
-            )
+            response.headers["X-Credits-Deducted"] = str(deducted)
         return response
