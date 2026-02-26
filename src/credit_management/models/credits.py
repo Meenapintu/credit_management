@@ -19,8 +19,8 @@ class CreditExpiryRecord(DBSerializableModel):
     id: Optional[str] = Field(default=None)
     user_id: str
     subscription_plan_id: Optional[str] = None
-    credits: int
-    remaining_credits: int
+    credits: float
+    remaining_credits: float
     expires_at: datetime
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expired: bool = False
@@ -36,10 +36,9 @@ class ReservedCredits(DBSerializableModel):
     id: Optional[str] = Field(default=None)
     user_id: str
     subscription_plan_id: Optional[str] = None
-    credits: int
+    credits: float
     reason: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: Optional[datetime] = None
     committed: bool = False
     released: bool = False
-

@@ -27,11 +27,10 @@ class Transaction(DBSerializableModel):
 
     id: Optional[str] = Field(default=None)
     user_id: str
-    credits_added: int = 0
-    credits_deducted: int = 0
-    current_credits: int
+    credits_added: float = 0
+    credits_deducted: float = 0
+    current_credits: float
     transaction_type: TransactionType
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     description: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-

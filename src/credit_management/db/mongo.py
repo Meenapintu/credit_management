@@ -95,7 +95,7 @@ class MongoDBManager(BaseDBManager):
         await col.replace_one({"_id": data["_id"]}, data, upsert=False)
         return user
 
-    async def get_user_credits(self, user_id: str) -> int:
+    async def get_user_credits(self, user_id: str) -> float:
         """
         Derive current credits from the latest transaction for a user.
         """
@@ -146,37 +146,25 @@ class MongoDBManager(BaseDBManager):
         return [self._decode(Transaction, d) for d in docs if d is not None]  # type: ignore[list-item]
 
     # Credit expiry / reservation
-    async def add_credit_expiry_record(
-        self, record: CreditExpiryRecord
-    ) -> CreditExpiryRecord:
+    async def add_credit_expiry_record(self, record: CreditExpiryRecord) -> CreditExpiryRecord:
         col = self._db[CreditExpiryRecord.collection_name]
         data = self._prepare_insert(record)
         await col.insert_one(data)
         return record
 
-    async def get_credit_expiry_history(
-        self, user_id: str
-    ) -> Iterable[CreditExpiryRecord]:
+    async def get_credit_expiry_history(self, user_id: str) -> Iterable[CreditExpiryRecord]:
         col = self._db[CreditExpiryRecord.collection_name]
         cursor = col.find({"user_id": user_id}).sort("expires_at", 1)
         docs = await cursor.to_list(length=None)
-        return [
-            self._decode(CreditExpiryRecord, d)
-            for d in docs
-            if d is not None
-        ]  # type: ignore[list-item]
+        return [self._decode(CreditExpiryRecord, d) for d in docs if d is not None]  # type: ignore[list-item]
 
-    async def add_reserved_credits(
-        self, reserved: ReservedCredits
-    ) -> ReservedCredits:
+    async def add_reserved_credits(self, reserved: ReservedCredits) -> ReservedCredits:
         col = self._db[ReservedCredits.collection_name]
         data = self._prepare_insert(reserved)
         await col.replace_one({"_id": data["_id"]}, data, upsert=True)
         return reserved
 
-    async def get_reserved_credits_for_subscription_plan(
-        self, subscription_plan_id: str
-    ) -> Iterable[ReservedCredits]:
+    async def get_reserved_credits_for_subscription_plan(self, subscription_plan_id: str) -> Iterable[ReservedCredits]:
         col = self._db[ReservedCredits.collection_name]
         cursor = col.find(
             {
@@ -185,32 +173,22 @@ class MongoDBManager(BaseDBManager):
             }
         )
         docs = await cursor.to_list(length=None)
-        return [
-            self._decode(ReservedCredits, d)
-            for d in docs
-            if d is not None
-        ]  # type: ignore[list-item]
+        return [self._decode(ReservedCredits, d) for d in docs if d is not None]  # type: ignore[list-item]
 
     async def get_reserved_credits_for_user(self, user_id: str) -> int:
         col = self._db[ReservedCredits.collection_name]
-        cursor = col.find(
-            {"user_id": user_id, "committed": False, "released": False}
-        )
+        cursor = col.find({"user_id": user_id, "committed": False, "released": False})
         docs = await cursor.to_list(length=None)
         return sum(d.get("credits", 0) for d in docs)
 
     # Subscription operations
-    async def add_subscription_plan(
-        self, plan: SubscriptionPlan
-    ) -> SubscriptionPlan:
+    async def add_subscription_plan(self, plan: SubscriptionPlan) -> SubscriptionPlan:
         col = self._db[SubscriptionPlan.collection_name]
         data = self._prepare_insert(plan)
         await col.insert_one(data)
         return plan
 
-    async def update_subscription_plan(
-        self, plan: SubscriptionPlan
-    ) -> SubscriptionPlan:
+    async def update_subscription_plan(self, plan: SubscriptionPlan) -> SubscriptionPlan:
         col = self._db[SubscriptionPlan.collection_name]
         data = self._prepare_update(plan)
         await col.replace_one({"_id": data["_id"]}, data, upsert=False)
@@ -229,32 +207,20 @@ class MongoDBManager(BaseDBManager):
         col = self._db[SubscriptionPlan.collection_name]
         cursor = col.find({})
         docs = await cursor.to_list(length=None)
-        return [
-            self._decode(SubscriptionPlan, d)
-            for d in docs
-            if d is not None
-        ]  # type: ignore[list-item]
+        return [self._decode(SubscriptionPlan, d) for d in docs if d is not None]  # type: ignore[list-item]
 
-    async def add_user_subscription(
-        self, user_subscription: UserSubscription
-    ) -> UserSubscription:
+    async def add_user_subscription(self, user_subscription: UserSubscription) -> UserSubscription:
         col = self._db[UserSubscription.collection_name]
         data = self._prepare_insert(user_subscription)
-        await col.replace_one(
-            {"user_id": user_subscription.user_id}, data, upsert=True
-        )
+        await col.replace_one({"user_id": user_subscription.user_id}, data, upsert=True)
         return user_subscription
 
-    async def get_user_subscription_plan(
-        self, user_id: str
-    ) -> Optional[UserSubscription]:
+    async def get_user_subscription_plan(self, user_id: str) -> Optional[UserSubscription]:
         col = self._db[UserSubscription.collection_name]
         doc = await col.find_one({"user_id": user_id})
         return self._decode(UserSubscription, doc)
 
-    async def update_user_subscription_plan(
-        self, user_subscription: UserSubscription
-    ) -> UserSubscription:
+    async def update_user_subscription_plan(self, user_subscription: UserSubscription) -> UserSubscription:
         col = self._db[UserSubscription.collection_name]
         data = self._prepare_update(user_subscription)
         await col.replace_one({"_id": data["_id"]}, data, upsert=False)
@@ -265,9 +231,7 @@ class MongoDBManager(BaseDBManager):
         await col.delete_one({"user_id": user_id})
 
     # Notifications
-    async def add_notification_event(
-        self, notification: NotificationEvent
-    ) -> NotificationEvent:
+    async def add_notification_event(self, notification: NotificationEvent) -> NotificationEvent:
         col = self._db[NotificationEvent.collection_name]
         data = self._prepare_insert(notification)
         await col.insert_one(data)
@@ -279,4 +243,3 @@ class MongoDBManager(BaseDBManager):
         data = self._prepare_insert(entry)
         await col.insert_one(data)
         return entry
-

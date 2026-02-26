@@ -17,6 +17,7 @@ class InMemoryDBManager(BaseDBManager):
     Simple in-memory implementation used for tests and local development.
     NOT suitable for production, but exercises the abstraction and services.
     """
+
     _instance = None
     _initialized = False
 
@@ -64,7 +65,7 @@ class InMemoryDBManager(BaseDBManager):
         self._users[user.id] = user
         return user
 
-    async def get_user_credits(self, user_id: str) -> int:
+    async def get_user_credits(self, user_id: str) -> float:
         user = self._users.get(user_id)
         if user is not None:
             return user.current_credits
@@ -78,11 +79,7 @@ class InMemoryDBManager(BaseDBManager):
     async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
         """Optimized: compute balance and reserved in a single pass."""
         balance = await self.get_user_credits(user_id)
-        reserved = sum(
-            r.credits
-            for r in self._reserved
-            if r.user_id == user_id and not r.committed and not r.released
-        )
+        reserved = sum(r.credits for r in self._reserved if r.user_id == user_id and not r.committed and not r.released)
         return UserCreditInfo(
             balance=balance,
             reserved=reserved,
@@ -103,55 +100,35 @@ class InMemoryDBManager(BaseDBManager):
         return [t for t in self._transactions.values() if t.user_id == user_id]
 
     # Credit expiry / reservation
-    async def add_credit_expiry_record(
-        self, record: CreditExpiryRecord
-    ) -> CreditExpiryRecord:
+    async def add_credit_expiry_record(self, record: CreditExpiryRecord) -> CreditExpiryRecord:
         if record.id is None:
             record.id = self._next_id()
         self._expiry_records.append(record)
         return record
 
-    async def get_credit_expiry_history(
-        self, user_id: str
-    ) -> Iterable[CreditExpiryRecord]:
+    async def get_credit_expiry_history(self, user_id: str) -> Iterable[CreditExpiryRecord]:
         return [r for r in self._expiry_records if r.user_id == user_id]
 
-    async def add_reserved_credits(
-        self, reserved: ReservedCredits
-    ) -> ReservedCredits:
+    async def add_reserved_credits(self, reserved: ReservedCredits) -> ReservedCredits:
         if reserved.id is None:
             reserved.id = self._next_id()
         self._reserved.append(reserved)
         return reserved
 
-    async def get_reserved_credits_for_subscription_plan(
-        self, subscription_plan_id: str
-    ) -> Iterable[ReservedCredits]:
-        return [
-            r
-            for r in self._reserved
-            if r.subscription_plan_id == subscription_plan_id and not r.released
-        ]
+    async def get_reserved_credits_for_subscription_plan(self, subscription_plan_id: str) -> Iterable[ReservedCredits]:
+        return [r for r in self._reserved if r.subscription_plan_id == subscription_plan_id and not r.released]
 
-    async def get_reserved_credits_for_user(self, user_id: str) -> int:
-        return sum(
-            r.credits
-            for r in self._reserved
-            if r.user_id == user_id and not r.committed and not r.released
-        )
+    async def get_reserved_credits_for_user(self, user_id: str) -> float:
+        return sum(r.credits for r in self._reserved if r.user_id == user_id and not r.committed and not r.released)
 
     # Subscription operations
-    async def add_subscription_plan(
-        self, plan: SubscriptionPlan
-    ) -> SubscriptionPlan:
+    async def add_subscription_plan(self, plan: SubscriptionPlan) -> SubscriptionPlan:
         if plan.id is None:
             plan.id = self._next_id()
         self._plans[plan.id] = plan
         return plan
 
-    async def update_subscription_plan(
-        self, plan: SubscriptionPlan
-    ) -> SubscriptionPlan:
+    async def update_subscription_plan(self, plan: SubscriptionPlan) -> SubscriptionPlan:
         if plan.id is None:
             raise ValueError("Plan must have id to be updated")
         self._plans[plan.id] = plan
@@ -166,22 +143,16 @@ class InMemoryDBManager(BaseDBManager):
     async def get_all_subscription_plans(self) -> Iterable[SubscriptionPlan]:
         return list(self._plans.values())
 
-    async def add_user_subscription(
-        self, user_subscription: UserSubscription
-    ) -> UserSubscription:
+    async def add_user_subscription(self, user_subscription: UserSubscription) -> UserSubscription:
         if user_subscription.id is None:
             user_subscription.id = self._next_id()
         self._user_subscriptions[user_subscription.user_id] = user_subscription
         return user_subscription
 
-    async def get_user_subscription_plan(
-        self, user_id: str
-    ) -> Optional[UserSubscription]:
+    async def get_user_subscription_plan(self, user_id: str) -> Optional[UserSubscription]:
         return self._user_subscriptions.get(user_id)
 
-    async def update_user_subscription_plan(
-        self, user_subscription: UserSubscription
-    ) -> UserSubscription:
+    async def update_user_subscription_plan(self, user_subscription: UserSubscription) -> UserSubscription:
         if user_subscription.id is None:
             raise ValueError("UserSubscription must have id to be updated")
         self._user_subscriptions[user_subscription.user_id] = user_subscription
@@ -191,9 +162,7 @@ class InMemoryDBManager(BaseDBManager):
         self._user_subscriptions.pop(user_id, None)
 
     # Notifications
-    async def add_notification_event(
-        self, notification: NotificationEvent
-    ) -> NotificationEvent:
+    async def add_notification_event(self, notification: NotificationEvent) -> NotificationEvent:
         if notification.id is None:
             notification.id = self._next_id()
         self._notifications.append(notification)
@@ -204,4 +173,3 @@ class InMemoryDBManager(BaseDBManager):
             entry.id = self._next_id()
         self._ledger.append(entry)
         return entry
-

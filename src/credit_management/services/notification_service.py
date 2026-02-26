@@ -23,7 +23,7 @@ class NotificationService:
         db: BaseDBManager,
         queue: AsyncNotificationQueue,
         credit_service: CreditService,
-        low_credit_threshold: int,
+        low_credit_threshold: float,
     ) -> None:
         self._db = db
         self._queue = queue
@@ -52,12 +52,8 @@ class NotificationService:
             }
         )
 
-    async def notify_expiring_credits(
-        self, user_id: str, within_days: int
-    ) -> None:
-        expiring = await self._credit_service.get_expiring_credits_in_days(
-            user_id=user_id, days=within_days
-        )
+    async def notify_expiring_credits(self, user_id: str, within_days: int) -> None:
+        expiring = await self._credit_service.get_expiring_credits_in_days(user_id=user_id, days=within_days)
         total = sum(r.remaining_credits for r in expiring)
         if total <= 0:
             return
@@ -79,9 +75,7 @@ class NotificationService:
             }
         )
 
-    async def notify_transaction_error(
-        self, user_id: str, message: str, details: dict
-    ) -> None:
+    async def notify_transaction_error(self, user_id: str, message: str, details: dict) -> None:
         event = NotificationEvent(
             user_id=user_id,
             notification_type=NotificationType.TRANSACTION_ERROR,
@@ -98,4 +92,3 @@ class NotificationService:
                 "payload": event.payload,
             }
         )
-

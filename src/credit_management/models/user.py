@@ -11,9 +11,9 @@ from .base import DBSerializableModel
 class UserCreditInfo(BaseModel):
     """Credit information returned in a single optimized query."""
 
-    balance: int = Field(description="Total credits balance (from transactions)")
-    reserved: int = Field(description="Credits currently reserved (not committed/released)")
-    available: int = Field(description="Available credits (balance - reserved)")
+    balance: float = Field(description="Total credits balance (from transactions)")
+    reserved: float = Field(description="Credits currently reserved (not committed/released)")
+    available: float = Field(description="Available credits (balance - reserved)")
 
 
 class UserAccount(DBSerializableModel):
@@ -29,10 +29,9 @@ class UserAccount(DBSerializableModel):
         default=None,
         description="Optional reference to external user identifier from host system.",
     )
-    current_credits: int = 0
-    reserved_credits: int = 0
+    current_credits: float = 0
+    reserved_credits: float = 0
     active_subscription_plan_id: Optional[str] = None
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-

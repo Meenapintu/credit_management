@@ -23,7 +23,7 @@ class CreditService:
         db: BaseDBManager,
         ledger: LedgerLogger,
         cache: Optional[AsyncCacheBackend] = None,
-        low_credit_threshold: int = 0,
+        low_credit_threshold: float = 0,
     ) -> None:
         self._db = db
         self._ledger = ledger
@@ -33,7 +33,7 @@ class CreditService:
     async def add_credits(
         self,
         user_id: str,
-        amount: int,
+        amount: float,
         description: str | None = None,
         subscription_plan_id: str | None = None,
         correlation_id: str | None = None,
@@ -83,16 +83,14 @@ class CreditService:
             # Cache update
             if self._cache:
                 # Update credit info cache: balance increased, reserved unchanged
-                await self._update_credit_info_cache(
-                    user_id, balance_delta=amount, reserved_delta=0
-                )
+                await self._update_credit_info_cache(user_id, balance_delta=amount, reserved_delta=0)
 
             return tx
 
     async def deduct_credits(
         self,
         user_id: str,
-        amount: int,
+        amount: float,
         description: str | None = None,
         correlation_id: str | None = None,
     ) -> Transaction:
@@ -130,17 +128,17 @@ class CreditService:
     async def deduct_credits_after_service(
         self,
         user_id: str,
-        amount: int,
+        amount: float,
         description: str | None = None,
         correlation_id: str | None = None,
     ) -> Transaction:
         """
         Deduct credits after service execution. Allows balance to go negative.
-        
+
         Use this when deducting actual usage after a service has run, where the
         actual cost may exceed the reserved amount. The balance can go negative
         to track overage/overdraft.
-        
+
         Example: Middleware reserved 50 credits, but actual API usage was 60.
         This method allows deducting 60 even if only 50 was reserved.
         """
@@ -160,8 +158,8 @@ class CreditService:
     async def _deduct_credits_internal(
         self,
         user_id: str,
-        amount: int,
-        current_balance: int,
+        amount: float,
+        current_balance: float,
         description: str | None = None,
         correlation_id: str | None = None,
     ) -> Transaction:
@@ -194,9 +192,7 @@ class CreditService:
 
         if self._cache:
             # Update credit info cache: balance decreased, reserved unchanged
-            await self._update_credit_info_cache(
-                user_id, balance_delta=-amount, reserved_delta=0
-            )
+            await self._update_credit_info_cache(user_id, balance_delta=-amount, reserved_delta=0)
 
         return tx
 
@@ -246,21 +242,17 @@ class CreditService:
 
                 if self._cache:
                     # Update credit info cache: balance decreased by expired_total, reserved unchanged
-                    await self._update_credit_info_cache(
-                        user_id, balance_delta=-expired_total, reserved_delta=0
-                    )
+                    await self._update_credit_info_cache(user_id, balance_delta=-expired_total, reserved_delta=0)
 
         return expired_total
-
-
 
     async def get_user_credits_info(self, user_id: str) -> UserCreditInfo:
         """
         Get balance, reserved, and available credits in a single optimized call.
-        
+
         Primary source: cache (updated on every credit modification).
         Fallback: DB (only if cache is missing or corrupted).
-        
+
         This is more efficient than calling get_user_credits + get_reserved_credits separately.
         """
         cache_key = self._user_credits_info_cache_key(user_id)
@@ -276,28 +268,22 @@ class CreditService:
         # Cache miss or corrupted - fetch from DB and populate cache
         info = await self._db.get_user_credits_info(user_id)
         if self._cache:
-            await self._cache.set(
-                cache_key, info.model_dump(), ttl_seconds=300
-            )
+            await self._cache.set(cache_key, info.model_dump(), ttl_seconds=300)
         return info
 
     async def get_credit_history(self, user_id: str) -> Iterable[Transaction]:
         return await self._db.get_transactions(user_id)
 
-    async def get_expiring_credits_in_days(
-        self, user_id: str, days: int
-    ) -> Iterable[CreditExpiryRecord]:
+    async def get_expiring_credits_in_days(self, user_id: str, days: int) -> Iterable[CreditExpiryRecord]:
         cutoff = datetime.utcnow() + timedelta(days=days)
         records = await self._db.get_credit_expiry_history(user_id)
-        return [
-            r for r in records if not r.expired and r.expires_at <= cutoff and r.remaining_credits > 0
-        ]
+        return [r for r in records if not r.expired and r.expires_at <= cutoff and r.remaining_credits > 0]
 
-    async def get_reserved_credits(self, user_id: str) -> int:
+    async def get_reserved_credits(self, user_id: str) -> float:
         # Aggregate all active reservations for the user
         # This is computed from ReservedCredits records.
         # A dedicated DB query/index would be better in production.
-        total =await  self._db.get_reserved_credits_for_user(user_id)
+        total = await self._db.get_reserved_credits_for_user(user_id)
 
         # Fallback: iterate over all plans; concrete DB backends can implement
         # a more efficient method if needed.
@@ -308,7 +294,7 @@ class CreditService:
     async def reserve_credits(
         self,
         user_id: str,
-        amount: int,
+        amount: float,
         reason: str | None = None,
         subscription_plan_id: str | None = None,
         correlation_id: str | None = None,
@@ -330,11 +316,13 @@ class CreditService:
                     user_id=user_id,
                     correlation_id=correlation_id,
                 )
-                raise ValueError(f"""insufficient credits for reservation 
+                raise ValueError(
+                    f"""insufficient credits for reservation 
                         "requested":{amount} ,
                         "balance": {credit_info.balance},
                         "reserved": {credit_info.reserved},
-                        "available": {credit_info.available}""")
+                        "available": {credit_info.available}"""
+                )
 
             reserved = ReservedCredits(
                 user_id=user_id,
@@ -353,9 +341,7 @@ class CreditService:
 
             if self._cache:
                 # Update credit info cache: balance unchanged, reserved increased
-                await self._update_credit_info_cache(
-                    user_id, balance_delta=0, reserved_delta=amount
-                )
+                await self._update_credit_info_cache(user_id, balance_delta=0, reserved_delta=amount)
 
             return reserved
 
@@ -440,9 +426,7 @@ class CreditService:
     def _user_credits_info_cache_key(user_id: str) -> str:
         return f"credit:user:{user_id}:info"
 
-    async def _update_credit_info_cache(
-        self, user_id: str, balance_delta: int, reserved_delta: int
-    ) -> None:
+    async def _update_credit_info_cache(self, user_id: str, balance_delta: float, reserved_delta: float) -> None:
         """
         Update the cached credit info by applying deltas.
         If cache is missing or corrupted, it will be refreshed on next get_user_credits_info call.
@@ -459,12 +443,9 @@ class CreditService:
                 updated_info = UserCreditInfo(
                     balance=current_info.balance + balance_delta,
                     reserved=current_info.reserved + reserved_delta,
-                    available=(current_info.balance + balance_delta)
-                    - (current_info.reserved + reserved_delta),
+                    available=(current_info.balance + balance_delta) - (current_info.reserved + reserved_delta),
                 )
-                await self._cache.set(
-                    cache_key, updated_info.model_dump(), ttl_seconds=300
-                )
+                await self._cache.set(cache_key, updated_info.model_dump(), ttl_seconds=300)
                 return
             except Exception:
                 # Cache corrupted, delete it - will be refreshed on next call
@@ -477,4 +458,3 @@ class CreditService:
         """
         if self._cache:
             await self._cache.delete(self._user_credits_info_cache_key(user_id))
-

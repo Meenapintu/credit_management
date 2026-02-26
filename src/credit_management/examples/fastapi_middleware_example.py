@@ -61,7 +61,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     message: str
-    total_token: int  # middleware reads this and deducts credits
+    total_token: float  # middleware reads this and deducts credits
 
 
 @app.post("/api/chat", response_model=ChatResponse)

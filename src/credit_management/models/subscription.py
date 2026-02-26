@@ -25,12 +25,10 @@ class SubscriptionPlan(DBSerializableModel):
     id: Optional[str] = Field(default=None)
     name: str
     description: Optional[str] = None
-    credit_limit: int = Field(description="Total credits allocated per billing period.")
+    credit_limit: float = Field(description="Total credits allocated per billing period.")
     price: float
     billing_period: BillingPeriod
-    validity_days: int = Field(
-        description="Number of days before allocated credits expire."
-    )
+    validity_days: int = Field(description="Number of days before allocated credits expire.")
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -50,4 +48,3 @@ class UserSubscription(DBSerializableModel):
     valid_until: Optional[datetime] = None
     auto_renew: bool = True
     is_active: bool = True
-

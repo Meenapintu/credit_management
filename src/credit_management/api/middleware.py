@@ -56,7 +56,7 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
         path_prefix: str = "/api",
         user_id_header: str = "X-User-Id",
         estimated_tokens_header: str = "X-Estimated-Tokens",
-        default_estimated_tokens: int = 100,
+        default_estimated_tokens: float = 100,
         response_usage_key: str = "total_token",
         skip_paths: Optional[Sequence[str]] = None,
     ) -> None:
@@ -93,7 +93,7 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
                 self.estimated_tokens_header,
                 str(self.default_estimated_tokens),
             )
-            estimated = max(1, int(estimated_str))
+            estimated = max(1, float(estimated_str))
         except ValueError:
             estimated = self.default_estimated_tokens
 
@@ -127,7 +127,7 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
         deducted = 0
         try:
             usages_raw = response.headers.get(self.response_usage_key)
-            actual = int(usages_raw) if usages_raw is not None else 0
+            actual = float(usages_raw) if usages_raw is not None else 0
             if actual > 0:
                 await self.credit_service.unreserve_credits(reservation)
                 # Use deduct_credits_after_service to allow negative balance
