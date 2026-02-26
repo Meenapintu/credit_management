@@ -5,7 +5,7 @@
 <p align="center">
   <img alt="Static Badge" src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge&color=00AA00">
 <img alt="PyPI - Python Version" src="https://img.shields.io/pypi/pyversions/Credit-Management?style=for-the-badge&labelColor=00AA00">
-<img alt="PyPI - Downloads" src="https://img.shields.io/pypi/dd/Credit-Management?style=for-the-badge">
+<img alt="PyPI - Downloads" src="https://img.shields.io/pypi/dw/Credit-Management?style=for-the-badge">
 <img alt="PyPI - Version" src="https://img.shields.io/pypi/v/Credit-Management?style=for-the-badge">
 <img alt="PyPI - License" src="https://img.shields.io/pypi/l/Credit-Management?style=for-the-badge">
 <img alt="PyPI - Implementation" src="https://img.shields.io/pypi/implementation/Credit-Management?style=for-the-badge"><img alt="PyPI - Wheel" src="https://img.shields.io/pypi/wheel/Credit-Management?style=for-the-badge">

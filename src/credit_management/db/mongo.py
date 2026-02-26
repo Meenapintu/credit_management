@@ -175,7 +175,7 @@ class MongoDBManager(BaseDBManager):
         docs = await cursor.to_list(length=None)
         return [self._decode(ReservedCredits, d) for d in docs if d is not None]  # type: ignore[list-item]
 
-    async def get_reserved_credits_for_user(self, user_id: str) -> int:
+    async def get_reserved_credits_for_user(self, user_id: str) -> float:
         col = self._db[ReservedCredits.collection_name]
         cursor = col.find({"user_id": user_id, "committed": False, "released": False})
         docs = await cursor.to_list(length=None)
