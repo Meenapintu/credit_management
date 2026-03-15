@@ -1,18 +1,20 @@
 # Contributing to Credit Management System
 
-First off, thank you for considering contributing to the Credit Management System! It’s people like you who make this a great tool for managing and transferring user credits.
+First off, Thank you for considering contributing to the Credit Management System! It’s people like you who make this a great tool for managing and transferring user credits.
+
+
+## How Can I Contribute?
+You can contribute by creating a issue/feature request, raising a PR for code, documentation update or anything which helps other users or contributors of this package in any way. Even a **star** helps in motivating. 
 
 Please take a moment to review these guidelines to make the contribution process easy and effective for everyone.
 
 ## Table of Contents
-1. [How Can I Contribute?](#how-can-i-contribute)
-2. [Pull Request Process](#pull-request-process)
+1. [Pull Request Process](#pull-request-process)
 3. [Coding Standards](#coding-standards)
 4. [Reporting Bugs](#reporting-bugs)
+5. [Suggesting Enhancements/Feature-request](#suggesting-enhancements)
 
 ---
-
-## How Can I Contribute?
 
 ### Reporting Bugs
 If you find a bug, please [open an issue](https://github.com/Meenapintu/credit_management/issues) and include:
