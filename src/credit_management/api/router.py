@@ -46,12 +46,16 @@ def _create_db_manager() -> BaseDBManager:
     return InMemoryDBManager()
 
 
-_db = _create_db_manager()
-_cache = InMemoryAsyncCache()
-_ledger = LedgerLogger(db=_db, file_path=Path("logs/credit_ledger.log"))
-_queue = InMemoryNotificationQueue()
+def create_credit_service() -> tuple[CreditService, BaseDBManager, LedgerLogger, InMemoryAsyncCache]:
+    _db = _create_db_manager()
+    _cache = InMemoryAsyncCache()
+    _ledger = LedgerLogger(db=_db, file_path=Path("logs/credit_ledger.log"))
+    _credit_service = CreditService(db=_db, ledger=_ledger, cache=_cache)
+    return _credit_service, _db, _ledger, _cache
 
-_credit_service = CreditService(db=_db, ledger=_ledger, cache=_cache)
+
+_queue = InMemoryNotificationQueue()
+_credit_service, _db, _ledger, _cache = create_credit_service()
 _subscription_service = SubscriptionService(db=_db, ledger=_ledger, cache=_cache)
 _notification_service = NotificationService(
     db=_db,

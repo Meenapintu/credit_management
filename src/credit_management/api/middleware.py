@@ -7,17 +7,23 @@ Flow:
   3. After response: read actual usage from response body (e.g. total_token),
      deduct that amount, then release the reservation (unreserve).
   So the net deduction is the actual usage; the reservation only holds credits temporarily.
+
+LLM Usage Metadata:
+  If the request handler records LLM usage via addLlmUsage(), the middleware
+  passes that metadata to the credit deduction transaction for detailed tracking.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+from credit_management.context.creditContext import LLMUsage, getLlmUsages
 
 from ..models.credits import ReservedCredits
 from ..services.credit_service import CreditService
@@ -57,7 +63,6 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
         user_id_header: str = "X-User-Id",
         estimated_tokens_header: str = "X-Estimated-Tokens",
         default_estimated_tokens: float = 100,
-        response_usage_key: str = "total_token",
         skip_paths: Optional[Sequence[str]] = None,
     ) -> None:
         super().__init__(app)
@@ -66,7 +71,6 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
         self.user_id_header = user_id_header
         self.estimated_tokens_header = estimated_tokens_header
         self.default_estimated_tokens = default_estimated_tokens
-        self.response_usage_key = response_usage_key
         self.skip_paths = tuple(skip_paths or ())
 
     def _should_apply(self, path: str) -> bool:
@@ -121,24 +125,45 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
         except Exception:
-            await self.credit_service.unreserve_credits(reservation)
+            await self.credit_service.unreserve_credits(reservation, correlation_id=request.headers.get("X-Request-Id"))
             raise
 
         deducted = 0
         try:
-            usages_raw = response.headers.get(self.response_usage_key)
-            actual = float(usages_raw) if usages_raw is not None else 0
-            if actual > 0:
-                await self.credit_service.unreserve_credits(reservation)
+
+            # Collect LLM usage metadata from context (set by LiteLLM SDK)
+            llmUsages: list[LLMUsage] = getLlmUsages()
+            deducted = sum(u.cost for u in llmUsages if u.cost > 0)
+            if deducted > 0:
+                await self.credit_service.unreserve_credits(
+                    reservation, correlation_id=request.headers.get("X-Request-Id")
+                )
                 # Use deduct_credits_after_service to allow negative balance
                 # (actual usage may exceed reserved amount)
                 await self.credit_service.deduct_credits_after_service(
                     user_id=user_id,
-                    amount=actual,
-                    description="api-middleware",
+                    amount=deducted,
+                    description=f"api-middleware",
                     correlation_id=request.headers.get("X-Request-Id"),
+                    metadata={
+                        "llm_usage": [
+                            {
+                                "model": u.model,
+                                "provider": u.provider,
+                                "cost": u.cost,
+                                **u.metadata,
+                            }
+                            for u in llmUsages
+                            if u.cost > 0
+                        ]
+                    },
                 )
-                deducted = actual
+            elif deducted < 0:
+                logger.error(
+                    "Credit middleware: received negative usages %s",
+                    str(llmUsages),
+                    extra={"path": request.url.path, "user_id": user_id},
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             logger.warning(
                 "Credit middleware: could not read usage from response: %s",
@@ -154,6 +179,8 @@ class CreditDeductionMiddleware(BaseHTTPMiddleware):
 
         finally:
             if deducted == 0:
-                await self.credit_service.unreserve_credits(reservation)
+                await self.credit_service.unreserve_credits(
+                    reservation, correlation_id=request.headers.get("X-Request-Id")
+                )
             response.headers["X-Credits-Deducted"] = str(deducted)
         return response
