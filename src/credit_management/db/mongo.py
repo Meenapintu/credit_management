@@ -14,6 +14,7 @@ from ..models.notification import NotificationEvent
 from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
 from ..models.user import UserAccount, UserCreditInfo
+from ..models.payment import PaymentRecord
 
 
 TModel = TypeVar("TModel", bound=DBSerializableModel)
@@ -243,3 +244,30 @@ class MongoDBManager(BaseDBManager):
         data = self._prepare_insert(entry)
         await col.insert_one(data)
         return entry
+
+    # Payment operations
+    async def add_payment_record(self, record: PaymentRecord) -> PaymentRecord:
+        col = self._db[PaymentRecord.collection_name]
+        data = self._prepare_insert(record)
+        await col.replace_one({"_id": data["_id"]}, data, upsert=True)
+        return record
+
+    async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]:
+        col = self._db[PaymentRecord.collection_name]
+        query = {"_id": payment_id}
+        if user_id:
+            query["user_id"] = user_id
+        doc = await col.find_one(query)
+        return self._decode(PaymentRecord, doc)
+
+    async def get_payment_records_by_user(
+        self, user_id: str, limit: int = 20, skip: int = 0
+    ) -> Iterable[PaymentRecord]:
+        col = self._db[PaymentRecord.collection_name]
+        cursor = col.find({"user_id": user_id}).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=None)
+        return [self._decode(PaymentRecord, d) for d in docs if d is not None]
+
+    async def count_payment_records(self, user_id: str) -> int:
+        col = self._db[PaymentRecord.collection_name]
+        return await col.count_documents({"user_id": user_id})

@@ -10,6 +10,7 @@ from ..models.ledger import LedgerEntry
 from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
 from ..models.user import UserAccount, UserCreditInfo
+from ..models.payment import PaymentRecord
 
 
 class AsyncTransaction(Protocol):
@@ -127,3 +128,18 @@ class BaseDBManager(ABC):
     # Ledger
     @abstractmethod
     async def add_ledger_entry(self, entry: LedgerEntry) -> LedgerEntry: ...
+
+    # Payment operations
+    @abstractmethod
+    async def add_payment_record(self, record: PaymentRecord) -> PaymentRecord: ...
+
+    @abstractmethod
+    async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]: ...
+
+    @abstractmethod
+    async def get_payment_records_by_user(
+        self, user_id: str, limit: int = 20, skip: int = 0
+    ) -> Iterable[PaymentRecord]: ...
+
+    @abstractmethod
+    async def count_payment_records(self, user_id: str) -> int: ...

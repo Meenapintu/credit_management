@@ -10,6 +10,7 @@ from ..models.ledger import LedgerEntry
 from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
 from ..models.user import UserAccount, UserCreditInfo
+from ..models.payment import PaymentRecord
 
 
 class InMemoryDBManager(BaseDBManager):
@@ -38,6 +39,7 @@ class InMemoryDBManager(BaseDBManager):
             self._user_subscriptions: Dict[str, UserSubscription] = {}
             self._notifications: List[NotificationEvent] = []
             self._ledger: List[LedgerEntry] = []
+            self._payments: Dict[str, PaymentRecord] = {}
             self._id_counter: int = 0
 
     def _next_id(self) -> str:
@@ -173,3 +175,26 @@ class InMemoryDBManager(BaseDBManager):
             entry.id = self._next_id()
         self._ledger.append(entry)
         return entry
+
+    # Payment operations
+    async def add_payment_record(self, record: PaymentRecord) -> PaymentRecord:
+        if record.id is None:
+            record.id = self._next_id()
+        self._payments[record.id] = record
+        return record
+
+    async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]:
+        record = self._payments.get(payment_id)
+        if record and user_id and record.user_id != user_id:
+            return None
+        return record
+
+    async def get_payment_records_by_user(
+        self, user_id: str, limit: int = 20, skip: int = 0
+    ) -> Iterable[PaymentRecord]:
+        records = [r for r in self._payments.values() if r.user_id == user_id]
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return records[skip : skip + limit]
+
+    async def count_payment_records(self, user_id: str) -> int:
+        return sum(1 for r in self._payments.values() if r.user_id == user_id)
