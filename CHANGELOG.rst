@@ -2,6 +2,14 @@
 2026-02-20
 ==========
 
+V0.6.0
+ Removed
+ -------
+ - Added promotion service
+ - Added payment provider rozerpay 
+ - split router for bankend and frontend
+
+
 V0.5.1
  Removed
  -------
