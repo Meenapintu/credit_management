@@ -11,6 +11,7 @@ from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
 from ..models.user import UserAccount, UserCreditInfo
 from ..models.payment import PaymentRecord
+from ..models.promo import PromoRecord, UserPromoClaim
 
 
 class AsyncTransaction(Protocol):
@@ -143,3 +144,31 @@ class BaseDBManager(ABC):
 
     @abstractmethod
     async def count_payment_records(self, user_id: str) -> int: ...
+
+    # Promo operations
+    @abstractmethod
+    async def add_promo(self, promo: PromoRecord) -> PromoRecord: ...
+
+    @abstractmethod
+    async def get_promo_by_id(self, promo_id: str) -> Optional[PromoRecord]: ...
+
+    @abstractmethod
+    async def get_promo_by_code(self, code: str) -> Optional[PromoRecord]: ...
+
+    @abstractmethod
+    async def list_promos(self, active_only: bool = True) -> list[PromoRecord]: ...
+
+    @abstractmethod
+    async def update_promo(self, promo: PromoRecord) -> PromoRecord: ...
+
+    @abstractmethod
+    async def add_promo_claim(self, claim: UserPromoClaim) -> UserPromoClaim: ...
+
+    @abstractmethod
+    async def get_user_promo_claims(self, user_id: str) -> list[UserPromoClaim]: ...
+
+    @abstractmethod
+    async def count_promo_claims(self, promo_id: str) -> int: ...
+
+    @abstractmethod
+    async def count_user_promo_claims(self, user_id: str, promo_id: str) -> int: ...

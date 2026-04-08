@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from ..cache.base import AsyncCacheBackend
 from ..db.base import BaseDBManager
@@ -93,6 +93,7 @@ class CreditService:
         amount: float,
         description: str | None = None,
         correlation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> Transaction:
         """
         Deduct credits from user account. Raises ValueError if insufficient credits.
@@ -123,6 +124,7 @@ class CreditService:
                 current_balance=credit_info.balance,
                 description=description,
                 correlation_id=correlation_id,
+                metadata=metadata,
             )
 
     async def deduct_credits_after_service(
@@ -131,6 +133,7 @@ class CreditService:
         amount: float,
         description: str | None = None,
         correlation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> Transaction:
         """
         Deduct credits after service execution. Allows balance to go negative.
@@ -153,6 +156,7 @@ class CreditService:
                 current_balance=credit_info.balance,
                 description=description,
                 correlation_id=correlation_id,
+                metadata=metadata,
             )
 
     async def _deduct_credits_internal(
@@ -162,6 +166,7 @@ class CreditService:
         current_balance: float,
         description: str | None = None,
         correlation_id: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> Transaction:
         """
         Internal method that performs the actual deduction logic.
@@ -176,6 +181,7 @@ class CreditService:
             current_credits=new_balance,
             transaction_type=TransactionType.DEDUCT,
             description=description,
+            metadata=metadata or {},
         )
         tx = await self._db.add_transaction(tx)
 
@@ -186,6 +192,7 @@ class CreditService:
                 "amount": amount,
                 "new_balance": new_balance,
                 "description": description or "",
+                "metadata": metadata,
             },
             correlation_id=correlation_id,
         )

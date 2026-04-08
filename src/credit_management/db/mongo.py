@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import datetime
 from typing import Any, AsyncIterator, Dict, Iterable, List, Mapping, Optional, Type, TypeVar
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
 from ..models.user import UserAccount, UserCreditInfo
 from ..models.payment import PaymentRecord
+from ..models.promo import PromoRecord, UserPromoClaim
 
 
 TModel = TypeVar("TModel", bound=DBSerializableModel)
@@ -271,3 +273,54 @@ class MongoDBManager(BaseDBManager):
     async def count_payment_records(self, user_id: str) -> int:
         col = self._db[PaymentRecord.collection_name]
         return await col.count_documents({"user_id": user_id})
+
+    # Promo operations
+    async def add_promo(self, promo: PromoRecord) -> PromoRecord:
+        col = self._db[PromoRecord.collection_name]
+        data = self._prepare_insert(promo)
+        await col.insert_one(data)
+        return promo
+
+    async def get_promo_by_id(self, promo_id: str) -> Optional[PromoRecord]:
+        col = self._db[PromoRecord.collection_name]
+        doc = await col.find_one({"_id": promo_id})
+        return self._decode(PromoRecord, doc)
+
+    async def get_promo_by_code(self, code: str) -> Optional[PromoRecord]:
+        col = self._db[PromoRecord.collection_name]
+        doc = await col.find_one({"code": code})
+        return self._decode(PromoRecord, doc)
+
+    async def list_promos(self, active_only: bool = True) -> list[PromoRecord]:
+        col = self._db[PromoRecord.collection_name]
+        query = {"is_active": True} if active_only else {}
+        cursor = col.find(query).sort("created_at", -1)
+        docs = await cursor.to_list(length=None)
+        return [self._decode(PromoRecord, d) for d in docs if d is not None]
+
+    async def update_promo(self, promo: PromoRecord) -> PromoRecord:
+        col = self._db[PromoRecord.collection_name]
+        data = self._prepare_update(promo)
+        data["updated_at"] = datetime.utcnow()
+        await col.replace_one({"_id": data["_id"]}, data, upsert=False)
+        return promo
+
+    async def add_promo_claim(self, claim: UserPromoClaim) -> UserPromoClaim:
+        col = self._db[UserPromoClaim.collection_name]
+        data = self._prepare_insert(claim)
+        await col.insert_one(data)
+        return claim
+
+    async def get_user_promo_claims(self, user_id: str) -> list[UserPromoClaim]:
+        col = self._db[UserPromoClaim.collection_name]
+        cursor = col.find({"user_id": user_id}).sort("claimed_at", -1)
+        docs = await cursor.to_list(length=None)
+        return [self._decode(UserPromoClaim, d) for d in docs if d is not None]
+
+    async def count_promo_claims(self, promo_id: str) -> int:
+        col = self._db[UserPromoClaim.collection_name]
+        return await col.count_documents({"promo_id": promo_id})
+
+    async def count_user_promo_claims(self, user_id: str, promo_id: str) -> int:
+        col = self._db[UserPromoClaim.collection_name]
+        return await col.count_documents({"user_id": user_id, "promo_id": promo_id})

@@ -147,9 +147,7 @@ class RazorpayProvider(PaymentProvider):
 
     # ─── Webhook Signature Verification ──────────────────────────────────────
 
-    def verify_webhook_signature(
-        self, payload: Dict[str, Any], signature: str, secret: Optional[str] = None
-    ) -> bool:
+    def verify_webhook_signature(self, payload: Dict[str, Any], signature: str, secret: Optional[str] = None) -> bool:
         """
         Verify Razorpay webhook signature using HMAC-SHA256.
 

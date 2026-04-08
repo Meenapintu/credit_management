@@ -11,6 +11,7 @@ from ..models.subscription import SubscriptionPlan, UserSubscription
 from ..models.transaction import Transaction
 from ..models.user import UserAccount, UserCreditInfo
 from ..models.payment import PaymentRecord
+from ..models.promo import PromoRecord, UserPromoClaim
 
 
 class InMemoryDBManager(BaseDBManager):
@@ -40,6 +41,8 @@ class InMemoryDBManager(BaseDBManager):
             self._notifications: List[NotificationEvent] = []
             self._ledger: List[LedgerEntry] = []
             self._payments: Dict[str, PaymentRecord] = {}
+            self._promos: Dict[str, PromoRecord] = {}
+            self._promo_claims: List[UserPromoClaim] = []
             self._id_counter: int = 0
 
     def _next_id(self) -> str:
@@ -198,3 +201,47 @@ class InMemoryDBManager(BaseDBManager):
 
     async def count_payment_records(self, user_id: str) -> int:
         return sum(1 for r in self._payments.values() if r.user_id == user_id)
+
+    # Promo operations
+    async def add_promo(self, promo: PromoRecord) -> PromoRecord:
+        if promo.id is None:
+            promo.id = self._next_id()
+        self._promos[promo.id] = promo
+        return promo
+
+    async def get_promo_by_id(self, promo_id: str) -> Optional[PromoRecord]:
+        return self._promos.get(promo_id)
+
+    async def get_promo_by_code(self, code: str) -> Optional[PromoRecord]:
+        for promo in self._promos.values():
+            if promo.code == code:
+                return promo
+        return None
+
+    async def list_promos(self, active_only: bool = True) -> list[PromoRecord]:
+        promos = list(self._promos.values())
+        if active_only:
+            promos = [p for p in promos if p.is_active]
+        promos.sort(key=lambda p: p.created_at, reverse=True)
+        return promos
+
+    async def update_promo(self, promo: PromoRecord) -> PromoRecord:
+        if promo.id is None:
+            raise ValueError("Promo must have id to be updated")
+        self._promos[promo.id] = promo
+        return promo
+
+    async def add_promo_claim(self, claim: UserPromoClaim) -> UserPromoClaim:
+        if claim.id is None:
+            claim.id = self._next_id()
+        self._promo_claims.append(claim)
+        return claim
+
+    async def get_user_promo_claims(self, user_id: str) -> list[UserPromoClaim]:
+        return [c for c in self._promo_claims if c.user_id == user_id]
+
+    async def count_promo_claims(self, promo_id: str) -> int:
+        return sum(1 for c in self._promo_claims if c.promo_id == promo_id)
+
+    async def count_user_promo_claims(self, user_id: str, promo_id: str) -> int:
+        return sum(1 for c in self._promo_claims if c.user_id == user_id and c.promo_id == promo_id)
