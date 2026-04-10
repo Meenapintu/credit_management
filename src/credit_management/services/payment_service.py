@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 # ─── Default Bonus Tiers ─────────────────────────────────────────────────────
 # (amount_inr → bonus_multiplier)
 DEFAULT_BONUS_TIERS = {
-    1000: 1.1,   # 10% bonus for ₹1000+
-    5000: 1.2,   # 20% bonus for ₹5000+
+    1000: 1.1,  # 10% bonus for ₹1000+
+    5000: 1.2,  # 20% bonus for ₹5000+
 }
 
 
@@ -186,7 +186,8 @@ class PaymentService:
             metadata=payment_metadata,
         )
 
-        # Save payment record to DB
+        # Save payment record to DB — use Razorpay's payment_link.id (plink_xxx) as our record ID
+        # so we can look it up when the webhook arrives.
         record = PaymentRecord(
             id=link.payment_id,
             user_id=user_id,
@@ -235,22 +236,11 @@ class PaymentService:
         """
         Process a payment webhook event.
 
-        Flow:
-        1. Get the provider
-        2. Verify webhook signature
-        3. Process the event via provider
-        4. Check idempotency (already processed?)
-        5. Add credits to user account
-        6. Update payment record in DB
-        7. Log to ledger
-
-        Args:
-            provider_name: Which provider sent the webhook
-            payload: Webhook payload
-            signature: Webhook signature string
-
-        Returns:
-            PaymentResult with processing outcome
+        Key events:
+        - payment.authorized: Payment authorized but NOT captured — do NOT add credits
+        - payment.captured: Payment captured (for direct payments, not payment links)
+        - payment_link.paid: Payment link fully paid — THIS adds credits
+        - payment.failed: Payment failed
         """
         provider = self.get_provider(provider_name)
 
@@ -261,25 +251,75 @@ class PaymentService:
             logger.warning(f"Webhook signature verification failed: {e}")
             return PaymentResult(success=False, status="error", error="invalid_signature")
 
-        # 2. Process event via provider
+        # 2. Process event via provider (returns typed PaymentResult)
         event_result = await provider.handle_webhook_event(payload)
 
-        if not event_result.success and event_result.status != "ignored":
-            # Payment failed — update record
+        # 3. Handle non-success events (failed, ignored, authorized)
+        if not event_result.success:
+            if event_result.status == "authorized":
+                logger.info(
+                    f"Payment authorized (not captured): "
+                    f"{event_result.payment_id}, user={event_result.user_id}, "
+                    f"amount={event_result.amount} — skipping credit addition"
+                )
+                if event_result.payment_id:
+                    await self._update_payment_status(
+                        payment_id=event_result.payment_id,
+                        status=PaymentStatus.AUTHORIZED,
+                    )
+                return event_result
+
+            if event_result.status == "failed":
+                logger.warning(f"Payment failed: {event_result.payment_id}, " f"error={event_result.error}")
+                if event_result.payment_id:
+                    await self._update_payment_status(
+                        payment_id=event_result.payment_id,
+                        status=PaymentStatus.FAILED,
+                        error=event_result.error,
+                    )
+                return event_result
+
+            if event_result.status == "ignored":
+                return event_result
+
+            # Other non-success
+            return event_result
+
+        # 4. payment.captured — for payment links, only payment_link.paid adds credits.
+        # Check if this is a payment link by looking at payload keys
+        payload_keys = set(payload.get("payload", {}).keys())
+        is_payment_link = "payment_link" in payload_keys
+
+        if event_result.status == "captured" and is_payment_link:
+            # Payment link captured — credits will be added by payment_link.paid
+            logger.info(
+                f"Payment link captured (credits added by payment_link.paid): "
+                f"{event_result.payment_id}, user={event_result.user_id}"
+            )
             if event_result.payment_id:
                 await self._update_payment_status(
                     payment_id=event_result.payment_id,
-                    status=PaymentStatus.FAILED,
-                    error=event_result.error,
+                    status=PaymentStatus.CAPTURED,
                 )
             return event_result
 
-        if event_result.status == "ignored":
-            return event_result
-
-        # 3. Idempotency check — already processed?
+        # 5. Idempotency check — already captured?
         if event_result.payment_id:
             existing = await self._db.get_payment_record(event_result.payment_id)
+            if not existing:
+                # Try lookup by payment_link.id (plink_xxx) from payload
+                from ..models.razorpay import WebhookEvent
+
+                try:
+                    webhook = WebhookEvent(**payload)
+                    pl = webhook.get_payment_link()
+                    if pl:
+                        existing = await self._db.get_payment_record(pl.id)
+                        if existing:
+                            logger.info(f"Found payment record by payment_link.id: {pl.id}")
+                except Exception:
+                    pass
+
             if existing and existing.status == PaymentStatus.CAPTURED.value:
                 logger.info(f"Payment already processed (idempotent): {event_result.payment_id}")
                 return PaymentResult(
@@ -292,21 +332,22 @@ class PaymentService:
                     idempotent=True,
                 )
 
-        # 4. Calculate credits
+            # If we still can't find the payment record, create one from webhook data
+            if not existing and event_result.user_id and event_result.amount > 0:
+                try:
+                    webhook = WebhookEvent(**payload)
+                    existing = await self._create_payment_from_webhook(event_result, webhook)
+                except Exception as e:
+                    logger.error(f"Failed to create payment from webhook: {e}")
+
+        # 6. Calculate credits
         credits_to_add = self.calculate_credits(event_result.amount)
         user_id = event_result.user_id
 
         if not user_id:
-            # Try to get from existing record
-            if event_result.payment_id:
-                existing = await self._db.get_payment_record(event_result.payment_id)
-                if existing:
-                    user_id = existing.user_id
-
-        if not user_id:
             return PaymentResult(success=False, status="error", error="missing_user_id")
 
-        # 5. Add credits to user account
+        # 7. Add credits to user account
         try:
             tx = await self._credit_service.add_credits(
                 user_id=user_id,
@@ -314,9 +355,7 @@ class PaymentService:
                 description=f"Payment: {event_result.payment_id} — ₹{event_result.amount}",
                 correlation_id=event_result.payment_id,
             )
-            logger.info(
-                f"Credits added: user={user_id}, credits={credits_to_add}, tx_id={tx.id}"
-            )
+            logger.info(f"Credits added: user={user_id}, credits={credits_to_add}, tx_id={tx.id}")
         except Exception as e:
             logger.error(f"Failed to add credits for {event_result.payment_id}: {e}")
             return PaymentResult(
@@ -326,7 +365,7 @@ class PaymentService:
                 payment_id=event_result.payment_id,
             )
 
-        # 6. Update payment record
+        # 8. Update payment record
         if event_result.payment_id:
             await self._update_payment_status(
                 payment_id=event_result.payment_id,
@@ -335,7 +374,7 @@ class PaymentService:
                 payment_method=getattr(event_result, "payment_method", None),
             )
 
-        # 7. Log to ledger
+        # 9. Log to ledger
         await self._ledger.log_transaction(
             user_id=user_id,
             message="Payment captured — credits added",
@@ -356,6 +395,83 @@ class PaymentService:
             credits_added=credits_to_add,
             status="captured",
         )
+
+    async def _find_payment_by_webhook(
+        self, event_result: PaymentResult, webhook: "WebhookEvent"
+    ) -> Optional[PaymentRecord]:
+        """Find payment record using webhook data when direct lookup fails.
+
+        Tries:
+        1. Direct payment_id lookup (plink_xxx)
+        2. By provider_payment_link_id
+        """
+        # Direct lookup by payment_link.id
+        record = await self._db.get_payment_record(event_result.payment_id)
+        if record:
+            return record
+
+        # Try by payment_link.id from webhook
+        pl = webhook.get_payment_link()
+        if pl:
+            record = await self._db.get_payment_record(pl.id)
+            if record:
+                logger.info(f"Found payment record by payment_link.id: {pl.id}")
+                return record
+
+        return None
+
+    async def _create_payment_from_webhook(
+        self, event_result: PaymentResult, webhook: "WebhookEvent"
+    ) -> Optional[PaymentRecord]:
+        """Create a payment record from webhook data if it doesn't exist.
+
+        This handles the case where the payment_link.paid webhook arrives
+        but we can't find the original payment record.
+        """
+        pl = webhook.get_payment_link()
+        p = webhook.get_payment()
+        o = webhook.get_order()
+
+        if not pl:
+            return None
+
+        payment_link_id = pl.id
+        if not payment_link_id:
+            return None
+
+        # Check if record already exists
+        existing = await self._db.get_payment_record(payment_link_id)
+        if existing:
+            return existing
+
+        # Create a new payment record from webhook data
+        amount_paise = p.amount if p else pl.amount
+        amount_inr = amount_paise / 100 if amount_paise else 0
+
+        record = PaymentRecord(
+            id=payment_link_id,
+            user_id=event_result.user_id,
+            provider=ProviderType.RAZORPAY,
+            provider_payment_link_id=payment_link_id,
+            provider_payment_id=p.id if p else None,
+            provider_order_id=o.id if o else None,
+            amount=amount_paise,
+            currency="INR",
+            amount_inr=amount_inr,
+            credits_to_add=self.calculate_credits(amount_inr),
+            credits_added=0,
+            status=PaymentStatus.PENDING,
+            description=pl.description or "Payment from webhook",
+            metadata={
+                "razorpay_order_id": o.id if o else None,
+                "created_from": "webhook_fallback",
+                "webhook_event": webhook.event,
+            },
+        )
+
+        await self._db.add_payment_record(record)
+        logger.info(f"Created payment record from webhook: {payment_link_id}")
+        return record
 
     # ─── Payment History ─────────────────────────────────────────────────────
 
