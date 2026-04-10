@@ -3,6 +3,25 @@ Razorpay Payment Provider
 
 Implements the PaymentProvider interface for Razorpay gateway.
 Supports payment links, webhook verification, and event processing.
+
+Usage:
+    provider = RazorpayProvider(
+        key_id="rzp_test_xxx",
+        key_secret="xxx",
+        webhook_secret="whsec_xxx",  # Optional
+        callback_url="https://yourapp.com/payments/success",
+        audit_repo=audit_repo,  # Optional — for audit logging
+    )
+
+    # Create payment link
+    link = await provider.create_payment_link(
+        user_id="user-123",
+        amount=50000,  # 500 INR in paise
+        description="Credit top-up",
+    )
+
+    # Handle webhook
+    result = await provider.handle_webhook_event(payload)
 """
 
 from __future__ import annotations
@@ -59,6 +78,7 @@ class RazorpayProvider(PaymentProvider):
         webhook_secret: Optional[str] = None,
         callback_url: Optional[str] = None,
         app_base_url: Optional[str] = None,
+        audit_repo: Any = None,
     ):
         """
         Initialize Razorpay provider.
@@ -69,11 +89,13 @@ class RazorpayProvider(PaymentProvider):
             webhook_secret: Webhook signing secret (for verification)
             callback_url: URL to redirect after payment completion
             app_base_url: Base URL of the application (used for callback if callback_url not set)
+            audit_repo: Optional RazorpayAuditLogRepo for audit logging
         """
         self.key_id = key_id
         self.key_secret = key_secret
         self.webhook_secret = webhook_secret
         self.callback_url = callback_url or f"{app_base_url or 'http://localhost:8000'}/api/payments/success"
+        self.audit_repo = audit_repo
 
         self._client = razorpay.Client(auth=(key_id, key_secret))
         self._is_test_mode = key_id.startswith("rzp_test_")
@@ -133,10 +155,40 @@ class RazorpayProvider(PaymentProvider):
             if customer_phone:
                 link_data["customer"]["contact"] = customer_phone
 
-        link = self._client.payment_link.create(link_data)
+        # Call Razorpay API
+        try:
+            link = self._client.payment_link.create(link_data)
+            http_status = 200
+        except Exception as e:
+            logger.error(f"Razorpay create_payment_link failed: {e}")
+            # Log failure to audit
+            if self.audit_repo:
+                await self.audit_repo.log_outbound(
+                    payment_link_id="unknown",
+                    user_id=user_id,
+                    event_type="payment_link.created",
+                    request_payload=link_data,
+                    response_payload={"error": str(e)},
+                    http_status=500,
+                )
+            raise
 
         razorpay_link_id = link.get("id")  # plink_xxx
         short_url = link.get("short_url")
+
+        # Log to audit repo
+        if self.audit_repo:
+            try:
+                await self.audit_repo.log_outbound(
+                    payment_link_id=razorpay_link_id,
+                    user_id=user_id,
+                    event_type="payment_link.created",
+                    request_payload=link_data,
+                    response_payload=link,
+                    http_status=http_status,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log to audit repo: {e}")
 
         logger.info(
             f"Razorpay payment link created: {razorpay_link_id} | "
@@ -161,7 +213,13 @@ class RazorpayProvider(PaymentProvider):
         Verify Razorpay webhook signature using HMAC-SHA256.
 
         Signature = HMAC-SHA256(webhook_secret, request_body_json)
+
+        Skips verification in test mode (rzp_test_* keys) to allow local testing.
         """
+        # Skip in test mode
+        if self._is_test_mode:
+            return True
+
         webhook_secret = secret or self.webhook_secret
 
         if not webhook_secret:
@@ -188,6 +246,7 @@ class RazorpayProvider(PaymentProvider):
 
         Parses the raw payload into a typed WebhookEvent model,
         then dispatches to the appropriate handler based on event type.
+        Logs the event to the audit repo (raw JSON, no parsing).
         """
         event_type = payload.get("event", "")
 
@@ -202,6 +261,20 @@ class RazorpayProvider(PaymentProvider):
             webhook = WebhookEvent(**payload)
         except Exception as e:
             logger.error(f"Failed to parse webhook payload: {e}\nPayload: {json.dumps(payload, indent=2)}")
+            # Still log to audit repo
+            if self.audit_repo:
+                try:
+                    await self.audit_repo.log_inbound(
+                        payment_link_id=None,
+                        user_id=None,
+                        event_type=event_type,
+                        raw_payload=payload,
+                        http_status=400,
+                        processed=False,
+                        error=f"Failed to parse: {e}",
+                    )
+                except Exception:
+                    pass
             return PaymentResult(success=False, status="error", error="invalid_webhook_payload")
 
         logger.info(
@@ -210,20 +283,46 @@ class RazorpayProvider(PaymentProvider):
             f"mode: {'TEST' if self._is_test_mode else 'LIVE'}"
         )
 
-        if event_type == "payment_link.paid":
-            return self._process_payment_link_paid(webhook)
-        elif event_type == "payment.captured":
-            return self._process_payment_captured(webhook)
-        elif event_type == "payment.authorized":
-            return self._process_payment_authorized(webhook)
-        elif event_type == "payment.failed":
-            return self._process_payment_failed(webhook)
-        elif event_type in ("payment_link.expired", "payment_link.cancelled"):
-            logger.info(f"Razorpay webhook event (lifecycle): {event_type}")
-            return PaymentResult(success=True, status="ignored", error=f"Lifecycle event: {event_type}")
-        else:
-            logger.info(f"Razorpay webhook event ignored: {event_type}")
-            return PaymentResult(success=False, status="ignored", error=f"Unknown event: {event_type}")
+        # Dispatch to handler
+        try:
+            if event_type == "payment_link.paid":
+                result = self._process_payment_link_paid(webhook)
+            elif event_type == "payment.captured":
+                result = self._process_payment_captured(webhook)
+            elif event_type == "payment.authorized":
+                result = self._process_payment_authorized(webhook)
+            elif event_type == "payment.failed":
+                result = self._process_payment_failed(webhook)
+            elif event_type in ("payment_link.expired", "payment_link.cancelled"):
+                logger.info(f"Razorpay webhook event (lifecycle): {event_type}")
+                result = PaymentResult(success=True, status="ignored", error=f"Lifecycle event: {event_type}")
+            else:
+                logger.info(f"Razorpay webhook event ignored: {event_type}")
+                result = PaymentResult(success=False, status="ignored", error=f"Unknown event: {event_type}")
+        except Exception as e:
+            logger.error(f"Webhook handler failed for {event_type}: {e}", exc_info=True)
+            result = PaymentResult(success=False, status="error", error=str(e))
+
+        # Log to audit repo
+        if self.audit_repo:
+            try:
+                pl = webhook.get_payment_link()
+                payment_link_id = pl.id if pl else None
+                user_id = webhook.get_user_id()
+
+                await self.audit_repo.log_inbound(
+                    payment_link_id=payment_link_id,
+                    user_id=user_id,
+                    event_type=event_type,
+                    raw_payload=payload,
+                    http_status=200 if result.success else 400,
+                    processed=result.success,
+                    error=result.error if not result.success else None,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log webhook to audit repo: {e}")
+
+        return result
 
     def _process_payment_link_paid(self, webhook: WebhookEvent) -> PaymentResult:
         """Handle payment_link.paid webhook event.

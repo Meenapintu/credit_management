@@ -285,13 +285,14 @@ class PaymentService:
             # Other non-success
             return event_result
 
-        # 4. payment.captured — for payment links, only payment_link.paid adds credits.
-        # Check if this is a payment link by looking at payload keys
-        payload_keys = set(payload.get("payload", {}).keys())
-        is_payment_link = "payment_link" in payload_keys
-
-        if event_result.status == "captured" and is_payment_link:
-            # Payment link captured — credits will be added by payment_link.paid
+        # 4. payment.captured with payment_link → skip credits (payment_link.paid will add them).
+        # But payment_link.paid event itself should proceed to add credits.
+        event_type = payload.get("event", "")
+        if (
+            event_result.status == "captured"
+            and event_type == "payment.captured"
+            and "payment_link" in payload.get("payload", {})
+        ):
             logger.info(
                 f"Payment link captured (credits added by payment_link.paid): "
                 f"{event_result.payment_id}, user={event_result.user_id}"

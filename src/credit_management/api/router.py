@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter
 
@@ -33,6 +34,8 @@ from ..services.subscription_service import SubscriptionService
 from ..services.expiration_service import ExpirationService
 from ..services.payment_service import PaymentService
 from ..services.promo_service import PromoService
+from ..db.razorpay_audit import RazorpayAuditLogRepo
+from ..providers.razorpay import RazorpayProvider
 
 
 router = APIRouter(prefix="/credits", tags=["credits"])
@@ -68,5 +71,38 @@ _expiration_service = ExpirationService(db=_db, ledger=_ledger, credit_service=_
 # Payment service — caller must register providers via _payment_service.register_provider()
 _payment_service = PaymentService(db=_db, ledger=_ledger, credit_service=_credit_service, cache=_cache)
 
+# Razorpay audit log repository (append-only, raw JSON storage)
+_razorpay_audit_repo: Optional[RazorpayAuditLogRepo] = None
+if hasattr(_db, "_db"):
+    # MongoDB — has access to the raw AsyncIOMotorDatabase
+    _razorpay_audit_repo = RazorpayAuditLogRepo(_db._db)
+
+
+def get_razorpay_audit_repo() -> Optional[RazorpayAuditLogRepo]:
+    """Get the Razorpay audit log repository (may be None if not MongoDB)."""
+    return _razorpay_audit_repo
+
+
+def setup_razorpay_provider() -> None:
+    """Initialize Razorpay provider with audit logging and register it."""
+    key_id = os.getenv("RAZERPAY_TEST_KEY") or os.getenv("RAZORPAY_KEY_ID")
+    key_secret = os.getenv("RAZERPAY_TEST_SECRET") or os.getenv("RAZORPAY_KEY_SECRET")
+
+    if not key_id or not key_secret:
+        return
+
+    provider = RazorpayProvider(
+        key_id=key_id,
+        key_secret=key_secret,
+        webhook_secret=os.getenv("RAZORPAY_WEBHOOK_SECRET"),
+        app_base_url=os.getenv("APP_BASE_URL", "http://localhost:9000"),
+        audit_repo=_razorpay_audit_repo,
+    )
+    _payment_service.register_provider("razorpay", provider)
+
+
 # Promo service
 _promo_service = PromoService(db=_db, ledger=_ledger, credit_service=_credit_service)
+
+# Initialize Razorpay provider with audit logging
+setup_razorpay_provider()
