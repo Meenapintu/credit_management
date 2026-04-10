@@ -116,15 +116,11 @@ class RazorpayProvider(PaymentProvider):
         customer_phone: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> PaymentLinkResponse:
-        """
-        Create a Razorpay hosted payment link.
+        """Create a Razorpay hosted payment link.
 
-        The user is redirected to the returned URL to complete payment.
-        We set reference_id to our own payment_id so Razorpay echoes it
-        back in the webhook (when not empty), enabling us to match
-        webhook → payment record.
+        Full request/response JSON is stored in razorpay_audit_logs.
+        Logs only the event type and result — no sensitive data.
         """
-        # Generate our own payment_id — Razorpay will echo it back as reference_id
         payment_id = f"payl_{user_id}_{int(datetime.utcnow().timestamp())}"
 
         link_data: Dict[str, Any] = {
@@ -133,16 +129,10 @@ class RazorpayProvider(PaymentProvider):
             "accept_partial": False,
             "first_min_partial_amount": 0,
             "description": description,
-            "reference_id": payment_id,  # Our ID — Razorpay returns this in webhooks
-            "notify": {
-                "email": True,
-                "sms": True,
-            },
+            "reference_id": payment_id,
+            "notify": {"email": True, "sms": True},
             "callback_url": self.callback_url,
-            "notes": {
-                "user_id": user_id,
-                "purpose": "credit_topup",
-            },
+            "notes": {"user_id": user_id, "purpose": "credit_topup"},
         }
 
         if metadata:
@@ -155,13 +145,11 @@ class RazorpayProvider(PaymentProvider):
             if customer_phone:
                 link_data["customer"]["contact"] = customer_phone
 
-        # Call Razorpay API
         try:
             link = self._client.payment_link.create(link_data)
             http_status = 200
         except Exception as e:
-            logger.error(f"Razorpay create_payment_link failed: {e}")
-            # Log failure to audit
+            logger.error("Razorpay payment_link.create failed")
             if self.audit_repo:
                 await self.audit_repo.log_outbound(
                     payment_link_id="unknown",
@@ -173,10 +161,10 @@ class RazorpayProvider(PaymentProvider):
                 )
             raise
 
-        razorpay_link_id = link.get("id")  # plink_xxx
+        razorpay_link_id = link.get("id")
         short_url = link.get("short_url")
 
-        # Log to audit repo
+        # Audit stores full request/response JSON
         if self.audit_repo:
             try:
                 await self.audit_repo.log_outbound(
@@ -187,13 +175,19 @@ class RazorpayProvider(PaymentProvider):
                     response_payload=link,
                     http_status=http_status,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to log to audit repo: {e}")
+            except Exception:
+                pass
 
-        logger.info(
-            f"Razorpay payment link created: {razorpay_link_id} | "
-            f"reference_id={payment_id} | "
-            f"User: {user_id} | Amount: {amount}"
+        logger.info("Razorpay payment_link.created")
+
+        return PaymentLinkResponse(
+            payment_id=razorpay_link_id,
+            provider=ProviderType.RAZORPAY,
+            payment_url=short_url,
+            amount=amount / 100 if amount > 100 else amount,
+            currency=currency,
+            credits_to_add=0,
+            status="pending",
         )
 
         return PaymentLinkResponse(
@@ -241,27 +235,18 @@ class RazorpayProvider(PaymentProvider):
     # ─── Webhook Event Processing ────────────────────────────────────────────
 
     async def handle_webhook_event(self, payload: Dict[str, Any]) -> PaymentResult:
-        """
-        Process a Razorpay webhook event.
+        """Process a Razorpay webhook event.
 
-        Parses the raw payload into a typed WebhookEvent model,
-        then dispatches to the appropriate handler based on event type.
-        Logs the event to the audit repo (raw JSON, no parsing).
+        Full raw payload is stored in razorpay_audit_logs.
+        Logs only event type + result — no sensitive data.
         """
         event_type = payload.get("event", "")
-
-        # In test mode, log the full payload for easy debugging
-        if self._is_test_mode:
-            logger.info(
-                f"Razorpay webhook [{event_type}] — FULL PAYLOAD:\n" f"{json.dumps(payload, indent=2, default=str)}"
-            )
 
         # Parse into typed model
         try:
             webhook = WebhookEvent(**payload)
         except Exception as e:
-            logger.error(f"Failed to parse webhook payload: {e}\nPayload: {json.dumps(payload, indent=2)}")
-            # Still log to audit repo
+            logger.error(f"Razorpay webhook parse_failed: {event_type}")
             if self.audit_repo:
                 try:
                     await self.audit_repo.log_inbound(
@@ -271,17 +256,11 @@ class RazorpayProvider(PaymentProvider):
                         raw_payload=payload,
                         http_status=400,
                         processed=False,
-                        error=f"Failed to parse: {e}",
+                        error=f"parse_failed: {e}",
                     )
                 except Exception:
                     pass
             return PaymentResult(success=False, status="error", error="invalid_webhook_payload")
-
-        logger.info(
-            f"Razorpay webhook received: {event_type} | "
-            f"contains={webhook.contains} | "
-            f"mode: {'TEST' if self._is_test_mode else 'LIVE'}"
-        )
 
         # Dispatch to handler
         try:
@@ -294,113 +273,61 @@ class RazorpayProvider(PaymentProvider):
             elif event_type == "payment.failed":
                 result = self._process_payment_failed(webhook)
             elif event_type in ("payment_link.expired", "payment_link.cancelled"):
-                logger.info(f"Razorpay webhook event (lifecycle): {event_type}")
-                result = PaymentResult(success=True, status="ignored", error=f"Lifecycle event: {event_type}")
+                result = PaymentResult(success=True, status="ignored", error=f"lifecycle_{event_type}")
             else:
-                logger.info(f"Razorpay webhook event ignored: {event_type}")
-                result = PaymentResult(success=False, status="ignored", error=f"Unknown event: {event_type}")
+                result = PaymentResult(success=False, status="ignored", error=f"unknown_event")
         except Exception as e:
-            logger.error(f"Webhook handler failed for {event_type}: {e}", exc_info=True)
+            logger.error(f"Razorpay webhook handler_failed: {event_type}")
             result = PaymentResult(success=False, status="error", error=str(e))
 
-        # Log to audit repo
+        # Log to audit repo (stores full raw payload)
         if self.audit_repo:
             try:
                 pl = webhook.get_payment_link()
-                payment_link_id = pl.id if pl else None
-                user_id = webhook.get_user_id()
-
                 await self.audit_repo.log_inbound(
-                    payment_link_id=payment_link_id,
-                    user_id=user_id,
+                    payment_link_id=pl.id if pl else None,
+                    user_id=webhook.get_user_id(),
                     event_type=event_type,
                     raw_payload=payload,
                     http_status=200 if result.success else 400,
                     processed=result.success,
                     error=result.error if not result.success else None,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to log webhook to audit repo: {e}")
+            except Exception:
+                pass
+
+        logger.info(f"Razorpay {event_type} → " f"{'ok' if result.success else result.error or 'ignored'}")
 
         return result
 
     def _process_payment_link_paid(self, webhook: WebhookEvent) -> PaymentResult:
         """Handle payment_link.paid webhook event.
 
-        Key fields from the typed WebhookEvent model:
-        - webhook.get_payment_link().id → "plink_xxx" (Razorpay payment link ID)
-        - webhook.get_payment_link().reference_id → may be EMPTY!
-        - webhook.get_payment_link().notes → {"user_id": "...", ...}
-        - webhook.get_payment().id → razorpay pay_xxx
-        - webhook.get_payment().amount → amount in paise
-        - webhook.get_payment().method → upi, card, etc.
-        - webhook.get_order().id → order_xxx
-
-        IMPORTANT: Razorpay often sends empty reference_id in payment_link.paid.
-        We use payment_link.id (plink_xxx) as the payment_id for lookup.
+        Full payload stored in razorpay_audit_logs.
+        Logs only event type + result.
         """
         pl = webhook.get_payment_link()
         p = webhook.get_payment()
         o = webhook.get_order()
 
         if not pl:
-            logger.error("payment_link.paid: missing payment_link entity in payload")
             return PaymentResult(success=False, status="error", error="missing_payment_link_entity")
 
         payment_link_id = pl.id
-        reference_id = pl.reference_id or ""  # Often empty!
+        reference_id = pl.reference_id or ""
         razorpay_payment_id = p.id if p else None
         amount_paise = p.amount if p else pl.amount
         amount_inr = amount_paise / 100 if amount_paise else 0
         payment_method = p.method if p else "unknown"
-        payment_status = p.status if p else "unknown"
         order_id = o.id if o else None
-
-        # Extract user_id from notes
         user_id = webhook.get_user_id()
 
-        # Log ALL extracted fields for verification
-        logger.info(
-            f"Razorpay payment_link.paid — FIELD EXTRACTION:\n"
-            f"  reference_id:     {reference_id!r}\n"
-            f"  payment_link.id:  {payment_link_id!r}\n"
-            f"  payment.id:       {razorpay_payment_id!r}\n"
-            f"  payment.amount:   {amount_paise!r} (paise)\n"
-            f"  payment.method:   {payment_method!r}\n"
-            f"  payment.status:   {payment_status!r}\n"
-            f"  order.id:         {order_id!r}\n"
-            f"  payment_link.notes: {pl.notes!r}\n"
-            f"  payment.notes:    {p.notes if p else None!r}"
-        )
-
         if not user_id:
-            logger.error(
-                f"payment_link.paid missing user_id: "
-                f"plink_id={payment_link_id}, pay_id={razorpay_payment_id}, "
-                f"notes_link={pl.notes!r}, "
-                f"notes_payment={p.notes if p else None!r}"
-            )
             return PaymentResult(success=False, status="error", error="missing_user_id")
 
-        # Use payment_link.id (plink_xxx) as the payment_id for lookup.
-        # Our payment records are stored with id=payment_link.id.
-        # If reference_id is non-empty, use it instead (it's our original payment_id).
         payment_id = reference_id if reference_id else payment_link_id
-
         if not reference_id:
-            logger.warning(f"payment_link.paid: reference_id empty, using plink_id as payment_id: {payment_id}")
-
-        logger.info(
-            f"Razorpay payment_link.paid ✅: "
-            f"payment_id={payment_id}, "
-            f"plink_id={payment_link_id}, "
-            f"pay_id={razorpay_payment_id}, "
-            f"order_id={order_id}, "
-            f"amount_inr={amount_inr}, "
-            f"method={payment_method}, "
-            f"payment_status={payment_status}, "
-            f"user_id={user_id}"
-        )
+            logger.debug(f"Razorpay payment_link.paid: reference_id empty, using plink_id")
 
         return PaymentResult(
             success=True,
@@ -413,36 +340,13 @@ class RazorpayProvider(PaymentProvider):
         )
 
     def _process_payment_captured(self, webhook: WebhookEvent) -> PaymentResult:
-        """Handle payment.captured webhook event.
-
-        For payment links, credits are only added via payment_link.paid.
-        For direct payments (no payment link), this event adds credits.
-        We return success=True with status="captured" — PaymentService
-        checks if this is a payment link and skips if so.
-        """
+        """Handle payment.captured webhook event. Full payload in audit logs."""
         p = webhook.get_payment()
         if not p:
-            logger.error("payment.captured: missing payment entity in payload")
             return PaymentResult(success=False, status="error", error="missing_payment_entity")
-
-        # Log ALL extracted fields for verification
-        logger.info(
-            f"Razorpay payment.captured — FIELD EXTRACTION:\n"
-            f"  payment.id:       {p.id!r}\n"
-            f"  payment.amount:   {p.amount!r} (paise)\n"
-            f"  payment.method:   {p.method!r}\n"
-            f"  payment.status:   {p.status!r}\n"
-            f"  payment.notes:    {p.notes!r}"
-        )
 
         amount_inr = p.amount / 100 if p.amount else 0
         user_id = webhook.get_user_id()
-
-        logger.info(
-            f"Razorpay payment.captured: "
-            f"pay_id={p.id}, amount_inr={amount_inr}, "
-            f"method={p.method}, status={p.status}, user_id={user_id}"
-        )
 
         return PaymentResult(
             success=True,
@@ -455,40 +359,19 @@ class RazorpayProvider(PaymentProvider):
         )
 
     def _process_payment_authorized(self, webhook: WebhookEvent) -> PaymentResult:
-        """Handle payment.authorized webhook event.
+        """Handle payment.authorized webhook event. Full payload in audit logs.
 
-        Payment authorized but not yet captured. We log it for tracking
-        but do NOT add credits — credits are only added when payment is
-        fully captured (payment_link.paid).
-
-        Returns success=False with status="authorized" so PaymentService
-        knows to skip credit addition.
+        Returns success=False so PaymentService skips credit addition.
         """
         p = webhook.get_payment()
         if not p:
-            logger.error("payment.authorized: missing payment entity in payload")
             return PaymentResult(success=False, status="error", error="missing_payment_entity")
-
-        logger.info(
-            f"Razorpay payment.authorized — FIELD EXTRACTION:\n"
-            f"  payment.id:       {p.id!r}\n"
-            f"  payment.amount:   {p.amount!r} (paise)\n"
-            f"  payment.method:   {p.method!r}\n"
-            f"  payment.status:   {p.status!r}\n"
-            f"  payment.notes:    {p.notes!r}"
-        )
 
         amount_inr = p.amount / 100 if p.amount else 0
         user_id = webhook.get_user_id()
 
-        logger.info(
-            f"Razorpay payment.authorized (not yet captured): "
-            f"pay_id={p.id}, amount_inr={amount_inr}, "
-            f"method={p.method}, user_id={user_id}"
-        )
-
         return PaymentResult(
-            success=False,  # Prevents PaymentService from adding credits
+            success=False,
             payment_id=p.id,
             user_id=user_id,
             amount=amount_inr,
@@ -498,30 +381,13 @@ class RazorpayProvider(PaymentProvider):
         )
 
     def _process_payment_failed(self, webhook: WebhookEvent) -> PaymentResult:
-        """Handle payment.failed webhook event."""
+        """Handle payment.failed webhook event. Full payload in audit logs."""
         p = webhook.get_payment()
         if not p:
-            logger.error("payment.failed: missing payment entity in payload")
             return PaymentResult(success=False, status="error", error="missing_payment_entity")
-
-        logger.info(
-            f"Razorpay payment.failed — FIELD EXTRACTION:\n"
-            f"  payment.id:                 {p.id!r}\n"
-            f"  payment.amount:             {p.amount!r} (paise)\n"
-            f"  payment.error_code:         {p.error_code!r}\n"
-            f"  payment.error_description:  {p.error_description!r}\n"
-            f"  payment.error_source:       {p.error_source!r}\n"
-            f"  payment.notes:              {p.notes!r}"
-        )
 
         amount_inr = p.amount / 100 if p.amount else 0
         user_id = webhook.get_user_id()
-
-        logger.warning(
-            f"Razorpay payment.failed ❌: "
-            f"pay_id={p.id}, amount_inr={amount_inr}, "
-            f"error={p.error_code}: {p.error_description}, user_id={user_id}"
-        )
 
         return PaymentResult(
             success=False,

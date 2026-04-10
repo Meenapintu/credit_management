@@ -54,7 +54,7 @@ async def payment_webhook(
     try:
         body = await request.json()
     except Exception as e:
-        logger.error(f"Failed to parse webhook body: {e}")
+        logger.error(f"Webhook router: failed to parse body")
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
 
     # Collect all possible signature headers
@@ -70,16 +70,14 @@ async def payment_webhook(
         if not result.success:
             if result.error == "invalid_signature":
                 return JSONResponse(status_code=401, content={"error": "Invalid signature"})
-            logger.warning(f"Webhook processing failed: {result.error}")
-            return JSONResponse(status_code=400, content={"error": result.error, "result": result.dict()})
+            return JSONResponse(status_code=400, content={"error": result.error})
 
-        logger.info(f"Webhook processed: {result.payment_id} → {result.status}")
-        return JSONResponse(status_code=200, content={"status": "ok", "result": result.dict()})
+        return JSONResponse(status_code=200, content={"status": "ok"})
 
     except ValueError as e:
-        logger.warning(f"Webhook signature verification failed for {provider_name}: {e}")
+        logger.warning(f"Webhook router: signature verification failed for {provider_name}")
         return JSONResponse(status_code=401, content={"error": "Invalid signature"})
 
     except Exception as e:
-        logger.error(f"Webhook processing error for {provider_name}: {e}")
+        logger.error(f"Webhook router: processing error for {provider_name}")
         return JSONResponse(status_code=500, content={"error": "Webhook processing failed"})

@@ -217,11 +217,7 @@ class PaymentService:
             },
         )
 
-        logger.info(
-            f"Payment link created: {link.payment_id} | "
-            f"User: {user_id} | "
-            f"Amount: ₹{amount_inr} → {credits_to_add} credits"
-        )
+        logger.info("PaymentService: payment_link.created")
 
         return link
 
@@ -257,11 +253,7 @@ class PaymentService:
         # 3. Handle non-success events (failed, ignored, authorized)
         if not event_result.success:
             if event_result.status == "authorized":
-                logger.info(
-                    f"Payment authorized (not captured): "
-                    f"{event_result.payment_id}, user={event_result.user_id}, "
-                    f"amount={event_result.amount} — skipping credit addition"
-                )
+                logger.info("PaymentService webhook: authorized (skipping credits)")
                 if event_result.payment_id:
                     await self._update_payment_status(
                         payment_id=event_result.payment_id,
@@ -293,10 +285,7 @@ class PaymentService:
             and event_type == "payment.captured"
             and "payment_link" in payload.get("payload", {})
         ):
-            logger.info(
-                f"Payment link captured (credits added by payment_link.paid): "
-                f"{event_result.payment_id}, user={event_result.user_id}"
-            )
+            logger.info("PaymentService webhook: captured with link (skipping credits)")
             if event_result.payment_id:
                 await self._update_payment_status(
                     payment_id=event_result.payment_id,
@@ -317,12 +306,12 @@ class PaymentService:
                     if pl:
                         existing = await self._db.get_payment_record(pl.id)
                         if existing:
-                            logger.info(f"Found payment record by payment_link.id: {pl.id}")
+                            logger.info(f"PaymentService webhook: found record by payment_link.id")
                 except Exception:
                     pass
 
             if existing and existing.status == PaymentStatus.CAPTURED.value:
-                logger.info(f"Payment already processed (idempotent): {event_result.payment_id}")
+                logger.info(f"PaymentService webhook: already processed (idempotent)")
                 return PaymentResult(
                     success=True,
                     payment_id=event_result.payment_id,
@@ -341,52 +330,40 @@ class PaymentService:
                 except Exception as e:
                     logger.error(f"Failed to create payment from webhook: {e}")
 
-        # 6. Calculate credits
-        credits_to_add = self.calculate_credits(event_result.amount)
-        user_id = event_result.user_id
+            # 6. Calculate credits
+            credits_to_add = self.calculate_credits(event_result.amount)
+            user_id = event_result.user_id
 
-        if not user_id:
-            return PaymentResult(success=False, status="error", error="missing_user_id")
+            if not user_id:
+                return PaymentResult(success=False, status="error", error="missing_user_id")
 
-        # 7. Add credits to user account
-        try:
-            tx = await self._credit_service.add_credits(
-                user_id=user_id,
-                amount=credits_to_add,
-                description=f"Payment: {event_result.payment_id} — ₹{event_result.amount}",
-                correlation_id=event_result.payment_id,
-            )
-            logger.info(f"Credits added: user={user_id}, credits={credits_to_add}, tx_id={tx.id}")
-        except Exception as e:
-            logger.error(f"Failed to add credits for {event_result.payment_id}: {e}")
-            return PaymentResult(
-                success=False,
-                status="error",
-                error="credit_addition_failed",
-                payment_id=event_result.payment_id,
-            )
+            # 7. Add credits to user account
+            try:
+                tx = await self._credit_service.add_credits(
+                    user_id=user_id,
+                    amount=credits_to_add,
+                    description=f"Payment: {event_result.payment_id}",
+                    correlation_id=event_result.payment_id,
+                )
+            except Exception as e:
+                logger.error(f"PaymentService webhook: failed to add credits")
+                return PaymentResult(
+                    success=False,
+                    status="error",
+                    error="credit_addition_failed",
+                    payment_id=event_result.payment_id,
+                )
 
-        # 8. Update payment record
-        if event_result.payment_id:
-            await self._update_payment_status(
-                payment_id=event_result.payment_id,
-                status=PaymentStatus.CAPTURED,
-                credits_added=credits_to_add,
-                payment_method=getattr(event_result, "payment_method", None),
-            )
+            # 8. Update payment record
+            if event_result.payment_id:
+                await self._update_payment_status(
+                    payment_id=event_result.payment_id,
+                    status=PaymentStatus.CAPTURED,
+                    credits_added=credits_to_add,
+                    payment_method=getattr(event_result, "payment_method", None),
+                )
 
-        # 9. Log to ledger
-        await self._ledger.log_transaction(
-            user_id=user_id,
-            message="Payment captured — credits added",
-            details={
-                "payment_id": event_result.payment_id,
-                "amount_inr": event_result.amount,
-                "credits_added": credits_to_add,
-                "provider": provider_name,
-            },
-            correlation_id=event_result.payment_id,
-        )
+            logger.info(f"PaymentService webhook: {event_type} → credits_added")
 
         return PaymentResult(
             success=True,
