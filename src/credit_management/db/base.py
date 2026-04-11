@@ -135,6 +135,9 @@ class BaseDBManager(ABC):
     async def add_payment_record(self, record: PaymentRecord) -> PaymentRecord: ...
 
     @abstractmethod
+    async def get_payment_by_provider_id(self, provider_payment_id: str) -> Optional[PaymentRecord]: ...
+
+    @abstractmethod
     async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]: ...
 
     @abstractmethod

@@ -186,6 +186,12 @@ class InMemoryDBManager(BaseDBManager):
         self._payments[record.id] = record
         return record
 
+    async def get_payment_by_provider_id(self, provider_payment_id: str) -> Optional[PaymentRecord]:
+        for rec in self._payments.values():
+            if rec.provider_payment_id == provider_payment_id:
+                return rec
+        return None
+
     async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]:
         record = self._payments.get(payment_id)
         if record and user_id and record.user_id != user_id:

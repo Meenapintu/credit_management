@@ -127,8 +127,6 @@ class RazorpayProvider(PaymentProvider):
         )
 
     def verify_webhook_signature(self, payload: Dict[str, Any], signature: str, secret: Optional[str] = None) -> bool:
-        if self._is_test_mode:
-            return True
         webhook_secret = secret or self.webhook_secret
         if not webhook_secret:
             logger.warning("RAZORPAY_WEBHOOK_SECRET not set — skipping signature verification")
