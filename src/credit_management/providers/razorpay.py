@@ -53,7 +53,13 @@ class RazorpayProvider(PaymentProvider):
         customer_phone: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> PaymentLinkResponse:
-        payment_id = f"payl_{user_id}_{int(datetime.utcnow().timestamp())}"
+        # Razorpay reference_id max length is 40 chars.
+        # Firebase UIDs are ~28 chars, so we use a short hash suffix.
+        import hashlib
+
+        ts = str(int(datetime.utcnow().timestamp()))
+        user_hash = hashlib.md5(user_id.encode()).hexdigest()[:8]
+        payment_id = f"payl_{user_hash}_{ts}"  # ~24 chars, well under 40
         link_data = {
             "amount": int(amount),
             "currency": currency,
