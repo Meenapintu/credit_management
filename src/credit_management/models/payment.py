@@ -1,3 +1,5 @@
+"""Payment Models — Razorpay integration."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,47 +14,50 @@ from .base import DBSerializableModel
 class ProviderType(str, Enum):
     RAZORPAY = "razorpay"
     STRIPE = "stripe"
-    # Future providers
-    # PAYPAL = "paypal"
-    # CASHFREE = "cashfree"
 
 
 class PaymentStatus(str, Enum):
+    """Payment states mapped 1:1 from Razorpay's native event names."""
+
     PENDING = "pending"
-    CREATED = "created"
-    AUTHORIZED = "authorized"
-    CAPTURED = "captured"
-    FAILED = "failed"
-    REFUNDED = "refunded"
-    CANCELLED = "cancelled"
+    AUTHORIZED = "authorized"  # payment.authorized
+    CAPTURED = "captured"  # payment.captured
+    PAID = "paid"  # payment_link.paid
+    PARTIALLY_PAID = "partially_paid"  # payment_link.partially_paid
+    EXPIRED = "expired"  # payment_link.expired
+    CANCELLED = "cancelled"  # payment_link.cancelled
+    FAILED = "failed"  # payment.failed
+    REFUND_CREATED = "refund_created"  # refund.created
+    REFUND_PROCESSED = "refund_processed"  # refund.processed
+    REFUND_FAILED = "refund_failed"  # refund.failed
+    DISPUTE_CLOSED = "dispute_closed"  # payment.dispute.closed
+    ORDER_PAID = "order_paid"  # order.paid
+    INVOICE_PAID = "invoice_paid"  # invoice.paid
+    INVOICE_PARTIALLY_PAID = "invoice_partially_paid"  # invoice.partially_paid
+    INVOICE_EXPIRED = "invoice_expired"  # invoice.expired
 
 
 class PaymentRecord(DBSerializableModel):
-    """
-    Unified payment record stored in the database.
-
-    Provider-agnostic: stores the provider type and raw provider response
-    in metadata so the same table/collection works for all payment gateways.
-    """
+    """Unified payment record stored in the database."""
 
     collection_name: ClassVar[str] = "payment_records"
 
     id: Optional[str] = Field(default=None)
     user_id: str
     provider: ProviderType
-    provider_payment_id: Optional[str] = None  # e.g. Razorpay pay_xxx, Stripe pi_xxx
-    provider_payment_link_id: Optional[str] = None  # e.g. Razorpay plink_xxx
+    provider_payment_id: Optional[str] = None
+    provider_payment_link_id: Optional[str] = None
     provider_order_id: Optional[str] = None
 
-    amount: float  # In smallest currency unit (paise for INR, cents for USD)
+    amount: float  # In smallest currency unit (paise for INR)
     currency: str = "INR"
     amount_inr: float = Field(0, description="Human-readable amount in INR")
 
-    credits_to_add: float = 0  # Calculated credits based on conversion rate
-    credits_added: float = 0  # Actual credits added (after successful payment)
+    credits_to_add: float = 0
+    credits_added: float = 0
 
     status: PaymentStatus = PaymentStatus.PENDING
-    payment_method: Optional[str] = None  # upi, card, netbanking, etc.
+    payment_method: Optional[str] = None
 
     description: Optional[str] = None
     customer_email: Optional[str] = None
@@ -62,7 +67,7 @@ class PaymentRecord(DBSerializableModel):
     completed_at: Optional[datetime] = None
     failed_at: Optional[datetime] = None
 
-    metadata: Dict[str, Any] = Field(default_factory=dict)  # Raw provider response, notes, etc.
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
 
 
@@ -79,7 +84,7 @@ class PaymentLinkResponse(DBSerializableModel):
 
 
 class PaymentResult(DBSerializableModel):
-    """Result of processing a payment webhook."""
+    """Result of processing a payment webhook event."""
 
     success: bool
     payment_id: Optional[str] = None
@@ -87,5 +92,5 @@ class PaymentResult(DBSerializableModel):
     amount: float = 0
     credits_added: float = 0
     status: str = ""
-    error: Optional[str] = None
     idempotent: bool = False
+    error: Optional[str] = None
