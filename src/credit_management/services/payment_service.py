@@ -433,6 +433,13 @@ class PaymentService:
 
     # ─── Payment History ─────────────────────────────────────────────────────
 
+    async def get_payment_by_id(self, payment_id: str, user_id: str) -> Optional[PaymentRecord]:
+        """Get a specific payment record, scoped to user."""
+        rec = await self._db.get_payment_record(payment_id)
+        if rec and rec.user_id == user_id:
+            return rec
+        return None
+
     async def get_payment_history(self, user_id: str, limit: int = 20, skip: int = 0) -> Dict:
         records, total = await self._get_user_payments(user_id, limit, skip)
         return {"payments": [self._record_to_dict(r) for r in records], "total": total}
