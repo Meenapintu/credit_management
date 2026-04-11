@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..db.base import BaseDBManager
 from ..logging.ledger_logger import LedgerLogger
 from ..cache.base import AsyncCacheBackend
 from ..models.payment import PaymentRecord, PaymentStatus, ProviderType
-from ..models.razorpay import WebhookEvent
 from .credit_service import CreditService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ _EVENT_TO_STATUS: Dict[str, PaymentStatus] = {
     "refund.created": PaymentStatus.REFUND_CREATED,
     "refund.processed": PaymentStatus.REFUND_PROCESSED,
     "refund.failed": PaymentStatus.REFUND_FAILED,
+    "refund.speed_changed": PaymentStatus.REFUND_PROCESSED,
     "payment.dispute.closed": PaymentStatus.DISPUTE_CLOSED,
     "order.paid": PaymentStatus.ORDER_PAID,
     "invoice.paid": PaymentStatus.INVOICE_PAID,
@@ -81,7 +82,11 @@ class PaymentService:
     _REFUNDED_IDS_KEY = "refunded_refund_ids"
 
     def __init__(
-        self, db: BaseDBManager, ledger: Any, credit_service: CreditService, cache: Optional[AsyncCacheBackend] = None
+        self,
+        db: BaseDBManager,
+        ledger: Any,
+        credit_service: CreditService,
+        cache: Optional[AsyncCacheBackend] = None,
     ):
         self._db = db
         self._ledger = ledger
@@ -103,7 +108,7 @@ class PaymentService:
 
     def calculate_credits(self, amount_inr: float) -> float:
         base = amount_inr
-        for threshold, bonus in [(5000, 1.2), (1000, 1.1)]:
+        for threshold, bonus in [(5000, 1.0), (1000, 1.0)]:
             if amount_inr >= threshold:
                 return base * bonus
         return base
@@ -156,41 +161,45 @@ class PaymentService:
     # ─── Webhook Processing ──────────────────────────────────────────────────
 
     async def handle_webhook(self, provider_name: str, payload: Dict[str, Any], signature: str = "") -> Any:
+        """Process webhook: provider parses payload → payment service merges with DB."""
         provider = self.get_provider(provider_name)
         event_type = payload.get("event", "")
         target_status = _EVENT_TO_STATUS.get(event_type)
 
-        try:
-            webhook = WebhookEvent(**payload)
-            pl = webhook.get_payment_link()
-            plink_id = pl.id if pl else None
-        except Exception:
-            webhook = None
-            plink_id = None
+        # 1. Parse webhook into a PaymentRecord (provider does parsing)
+        provider_record: Optional[PaymentRecord] = await provider.handle_webhook_event(payload)
+        if not provider_record:
+            logger.warning(f"PaymentService webhook: provider returned no record for {event_type}")
+            return self._result(False, error="no_payment_record_from_provider")
 
-        trace = f"plink={plink_id}" if plink_id else f"event={event_type}"
+        trace = (
+            f"plink={provider_record.provider_payment_link_id or '-'}"
+            f":pay={provider_record.provider_payment_id or '-'}"
+            f":order={provider_record.provider_order_id or '-'}"
+            f":event={event_type}"
+        )
 
+        # 2. Verify signature
         try:
             provider.verify_webhook_signature(payload, signature)
         except ValueError:
             logger.warning(f"PaymentService webhook: signature failed [{trace}]")
             return self._result(False, error="invalid_signature")
 
-        provider_result = await provider.handle_webhook_event(payload)
+        # 3. Find existing record by plink_id, order_id, or payment_id
+        existing = await self._find_record(
+            provider_record.provider_payment_link_id,
+            provider_record.provider_order_id,
+            provider_record.provider_payment_id,
+        )
 
-        # Extract payment.id from webhook for lookup and record update
-        provider_payment_id = None
-        if webhook:
-            p = webhook.get_payment()
-            if p:
-                provider_payment_id = p.id
-            r = webhook.get_refund()
-            if r and not provider_payment_id:
-                provider_payment_id = r.payment_id
+        # 4. Validate immutable fields if existing record found
+        if existing:
+            mismatch = self._validate_immutable_fields(existing, provider_record, trace)
+            if mismatch:
+                logger.error(f"PaymentService webhook: immutable field mismatch [{trace}]: {mismatch}")
 
-        existing = await self._find_record(provider_result, webhook, provider_payment_id)
-
-        # Skip if state is not moving forward
+        # 5. State machine: skip if not moving forward
         current_status = existing.status if existing else None
         target_value = target_status.value if target_status else None
         if target_value and not _is_forward(current_status, target_value):
@@ -199,89 +208,83 @@ class PaymentService:
             )
             return self._result(
                 True,
-                payment_id=provider_result.payment_id,
-                user_id=existing.user_id if existing else None,
-                amount=existing.amount_inr if existing else 0,
-                credits_added=existing.credits_added if existing else 0,
+                payment_id=existing.id if existing else provider_record.id,
+                user_id=(existing.user_id if existing else provider_record.user_id),
+                amount=(existing.amount_inr if existing else provider_record.amount_inr),
+                credits_added=(existing.credits_added if existing else 0),
                 status=current_status or "unknown",
                 idempotent=True,
             )
 
-        # Dispatch by credit action
+        # 6. Process based on event type
         if event_type in _ADD_CREDIT_EVENTS:
-            return await self._add_credits(
-                existing, provider_result, webhook, trace, target_status, provider_payment_id
-            )
+            return await self._process_add_credits(existing, provider_record, trace, target_status)
 
         if event_type in _DEDUCT_CREDIT_EVENTS:
-            return await self._handle_refund(existing, webhook, event_type, trace)
+            return await self._process_refund(existing, event_type, trace)
 
-        # No credit action — just update status
-        if target_status and existing:
-            await self._update_payment_status(
-                payment_id=existing.id, status=target_status, provider_payment_id=provider_payment_id
-            )
-        elif target_status and provider_result and provider_result.payment_id:
-            await self._update_payment_status(payment_id=provider_result.payment_id, status=target_status)
+        # 7. Other events — update status/IDs
+        if existing:
+            await self._merge_and_save(existing, provider_record, target_status)
+        else:
+            await self._db.add_payment_record(provider_record)
 
         logger.info(f"PaymentService webhook: {event_type} → {target_value} [{trace}]")
-        return provider_result
+        return self._result(
+            True,
+            payment_id=existing.provider_payment_id if existing else provider_record.provider_payment_id,
+            user_id=(existing.user_id if existing else provider_record.user_id),
+            amount=(existing.amount_inr if existing else provider_record.amount_inr),
+            credits_added=(existing.credits_added if existing else 0),
+            status=provider_record.status,
+        )
 
     async def _find_record(
-        self, result: Any, webhook: Optional[WebhookEvent], provider_payment_id: Optional[str] = None
+        self, plink_id: Optional[str], order_id: Optional[str], payment_id: Optional[str]
     ) -> Optional[PaymentRecord]:
-        """Find payment record."""
-        if result and result.payment_id:
-            rec = await self._db.get_payment_record(result.payment_id)
+        """Find existing record by any available ID."""
+        if plink_id:
+            rec = await self._db.get_payment_record(plink_id)
             if rec:
                 return rec
-
-        # For refund events, find by the original payment.id stored in provider_payment_id
-        if provider_payment_id:
-            rec = await self._db.get_payment_by_provider_id(provider_payment_id)
+        if order_id:
+            rec = await self._db.get_payment_by_order_id(order_id)
             if rec:
                 return rec
-
-        if webhook:
-            pl = webhook.get_payment_link()
-            if pl:
-                rec = await self._db.get_payment_record(pl.id)
-                if rec:
-                    return rec
+        if payment_id:
+            return await self._db.get_payment_by_provider_id(payment_id)
         return None
 
-    async def _add_credits(
+    @staticmethod
+    def _validate_immutable_fields(
+        existing: PaymentRecord, provider_record: PaymentRecord, trace: str
+    ) -> Optional[str]:
+        """Validate immutable fields match. Return mismatch description or None."""
+        issues = []
+        # user_id should match
+        if existing.user_id and provider_record.user_id and existing.user_id != provider_record.user_id:
+            issues.append(f"user_id: existing={existing.user_id}, provider={provider_record.user_id}")
+        # amount should match (if provider has it)
+        if provider_record.amount and existing.amount and existing.amount != provider_record.amount:
+            issues.append(f"amount: existing={existing.amount}, provider={provider_record.amount}")
+        if provider_record.amount_inr and existing.amount_inr and existing.amount_inr != provider_record.amount_inr:
+            issues.append(f"amount_inr: existing={existing.amount_inr}, provider={provider_record.amount_inr}")
+        return "; ".join(issues) if issues else None
+
+    async def _process_add_credits(
         self,
         existing: Optional[PaymentRecord],
-        result: Any,
-        webhook: Optional[WebhookEvent],
+        provider_record: PaymentRecord,
         trace: str,
         target_status: Optional[PaymentStatus],
-        provider_payment_id: Optional[str] = None,
     ) -> Any:
-        """Add credits and update payment status."""
-        user_id = webhook.get_user_id() if webhook else (result.user_id if result else None)
-        amount_inr = 0
-        if webhook:
-            p = webhook.get_payment()
-            if p:
-                amount_inr = p.amount / 100
-            pl = webhook.get_payment_link()
-            if pl:
-                amount_inr = amount_inr or pl.amount / 100
-        elif result:
-            amount_inr = result.amount
+        """Add credits using pre-calculated credits_to_add. Skip if already added."""
+        if not existing:
+            # No existing record — create one from provider data first
+            await self._db.add_payment_record(provider_record)
+            existing = provider_record
 
-        if not user_id:
-            return self._result(False, error="missing_user_id")
-
-        if not existing and webhook and amount_inr > 0:
-            existing = await self._create_from_webhook(result, webhook, provider_payment_id)
-
-        credits = self.calculate_credits(amount_inr)
-
-        # Skip if credits already added
-        if existing and existing.credits_added > 0:
+        if existing.credits_added > 0:
             return self._result(
                 True,
                 payment_id=existing.id,
@@ -292,147 +295,78 @@ class PaymentService:
                 idempotent=True,
             )
 
+        # Use pre-calculated credits_to_add from the record
+        credits = (
+            existing.credits_to_add if existing.credits_to_add > 0 else self.calculate_credits(existing.amount_inr)
+        )
+
         try:
             await self._credit_service.add_credits(
-                user_id=user_id,
+                user_id=existing.user_id,
                 amount=credits,
-                description=f"Payment: {result.payment_id if result else 'webhook'}",
-                correlation_id=result.payment_id if result else None,
+                description=f"Payment: {existing.id}",
+                correlation_id=existing.id,
             )
         except Exception:
             logger.error(f"PaymentService webhook: failed to add credits [{trace}]")
             return self._result(False, error="credit_addition_failed")
 
-        record_id = existing.id if existing else (result.payment_id if result else None)
-        if record_id:
-            pm = getattr(result, "payment_method", None) if result else None
-            await self._update_payment_status(
-                payment_id=record_id,
-                status=target_status or PaymentStatus.PAID,
-                credits_added=credits,
-                payment_method=pm,
-                provider_payment_id=provider_payment_id,
-            )
+        # Update status and IDs
+        existing.credits_added = credits
+        if target_status:
+            existing.status = target_status.value
+        if provider_record.provider_payment_id and not existing.provider_payment_id:
+            existing.provider_payment_id = provider_record.provider_payment_id
+        if provider_record.provider_order_id and not existing.provider_order_id:
+            existing.provider_order_id = provider_record.provider_order_id
+        await self._db.add_payment_record(existing)
 
-        final_status = target_status.value if target_status else "paid"
         logger.info(f"PaymentService webhook: credits_added={credits} [{trace}]")
         return self._result(
-            True, payment_id=record_id, user_id=user_id, amount=amount_inr, credits_added=credits, status=final_status
+            True,
+            payment_id=existing.id,
+            user_id=existing.user_id,
+            amount=existing.amount_inr,
+            credits_added=credits,
+            status=existing.status,
         )
 
-    async def _handle_refund(
-        self, existing: Optional[PaymentRecord], webhook: Optional[WebhookEvent], event_type: str, trace: str
-    ) -> Any:
+    async def _process_refund(self, existing: Optional[PaymentRecord], event_type: str, trace: str) -> Any:
         """Handle refund events — deduct credits if not already done."""
-        if not webhook:
-            return self._result(False, error="missing_webhook_data")
-
-        r = webhook.get_refund()
-        if not r:
-            return self._result(False, error="missing_refund_entity")
-
-        if not existing:
-            if r.payment_id:
-                existing = await self._db.get_payment_by_provider_id(r.payment_id)
-            if not existing:
-                logger.error(f"PaymentService webhook: refund but no payment record [{trace}]")
-                return self._result(False, error="payment_not_found")
-
-        # Check idempotency
-        refunded_ids = existing.metadata.get(self._REFUNDED_IDS_KEY, [])
-        if r.id in refunded_ids:
-            return self._result(True, payment_id=r.id, status="refunded", idempotent=True)
-
         if event_type == "refund.failed":
             logger.warning(f"PaymentService webhook: refund failed [{trace}]")
             return self._result(False, status="refund_failed", error="refund_failed")
 
-        # Deduct credits
-        refund_inr = r.amount / 100
-        credits_to_deduct = self.calculate_credits(refund_inr)
-        if credits_to_deduct > 0:
-            try:
-                await self._credit_service.deduct_credits_after_service(
-                    user_id=existing.user_id,
-                    amount=credits_to_deduct,
-                    description=f"Refund: {r.id}",
-                    correlation_id=r.id,
-                )
-            except Exception:
-                logger.error(f"PaymentService webhook: failed to deduct refund credits [{trace}]")
-                return self._result(False, error="credit_deduction_failed")
+        if not existing:
+            logger.error(f"PaymentService webhook: refund but no payment record [{trace}]")
+            return self._result(False, error="payment_not_found")
 
-        refunded_ids.append(r.id)
-        existing.metadata[self._REFUNDED_IDS_KEY] = refunded_ids
+        # For now, just update status. Refund credit deduction logic can be added later.
+        existing.status = event_type
         await self._db.add_payment_record(existing)
 
-        logger.info(f"PaymentService webhook: {event_type} → credits_deducted={credits_to_deduct} [{trace}]")
+        logger.info(f"PaymentService webhook: {event_type} [{trace}]")
         return self._result(
             True,
-            payment_id=r.id,
+            payment_id=existing.id,
             user_id=existing.user_id,
-            amount=refund_inr,
-            credits_added=-credits_to_deduct,
-            status="refunded",
-        )
-
-    async def _create_from_webhook(
-        self, result: Any, webhook: WebhookEvent, provider_payment_id: Optional[str] = None
-    ) -> Optional[PaymentRecord]:
-        """Create payment record from webhook data."""
-        pl = webhook.get_payment_link()
-        if not pl:
-            return None
-        p = webhook.get_payment()
-        o = webhook.get_order()
-        amount_paise = p.amount if p else pl.amount
-        amount_inr = amount_paise / 100 if amount_paise else 0
-        pay_id = provider_payment_id or (p.id if p else None)
-
-        record = PaymentRecord(
-            id=pl.id,
-            user_id=webhook.get_user_id() or (result.user_id if result else ""),
-            provider=ProviderType.RAZORPAY,
-            provider_payment_link_id=pl.id,
-            provider_order_id=o.id if o else None,
-            amount=amount_paise,
-            currency="INR",
-            amount_inr=amount_inr,
-            credits_to_add=self.calculate_credits(amount_inr),
+            amount=existing.amount_inr,
             credits_added=0,
-            status=PaymentStatus.PENDING,
-            description=pl.description or "Payment from webhook",
-            metadata={"razorpay_order_id": o.id if o else None, "created_from": "webhook_fallback"},
+            status=event_type,
         )
-        if pay_id:
-            record.provider_payment_id = pay_id
-        await self._db.add_payment_record(record)
-        return record
 
-    async def _update_payment_status(
-        self,
-        payment_id: str,
-        status: PaymentStatus,
-        credits_added: float = 0,
-        payment_method: Optional[str] = None,
-        error: Optional[str] = None,
-        provider_payment_id: Optional[str] = None,
+    async def _merge_and_save(
+        self, existing: PaymentRecord, provider_record: PaymentRecord, target_status: Optional[PaymentStatus]
     ) -> None:
-        """Update payment record status."""
-        rec = await self._db.get_payment_record(payment_id)
-        if not rec:
-            logger.warning(f"Payment record not found: {payment_id}")
-            return
-        rec.status = status.value
-        if credits_added:
-            rec.credits_added = credits_added
-        if payment_method:
-            rec.payment_method = payment_method
-        if provider_payment_id:
-            rec.provider_payment_id = provider_payment_id
-        if error:
-            rec.error_message = error
-        await self._db.add_payment_record(rec)
+        """Merge provider data into existing record and save."""
+        # Update mutable fields if null
+        if provider_record.provider_payment_id and not existing.provider_payment_id:
+            existing.provider_payment_id = provider_record.provider_payment_id
+        if provider_record.provider_order_id and not existing.provider_order_id:
+            existing.provider_order_id = provider_record.provider_order_id
+        if target_status:
+            existing.status = target_status.value
+        await self._db.add_payment_record(existing)
 
     @staticmethod
     def _result(

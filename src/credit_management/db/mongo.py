@@ -259,6 +259,11 @@ class MongoDBManager(BaseDBManager):
         doc = await col.find_one({"provider_payment_id": provider_payment_id})
         return self._decode(PaymentRecord, doc)
 
+    async def get_payment_by_order_id(self, provider_order_id: str) -> Optional[PaymentRecord]:
+        col = self._db[PaymentRecord.collection_name]
+        doc = await col.find_one({"provider_order_id": provider_order_id})
+        return self._decode(PaymentRecord, doc)
+
     async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]:
         col = self._db[PaymentRecord.collection_name]
         query = {"_id": payment_id}

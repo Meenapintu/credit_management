@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from ..models.payment import PaymentLinkResponse, PaymentResult
+if TYPE_CHECKING:
+    from ..models.payment import PaymentLinkResponse, PaymentRecord
 
 
 class PaymentProvider(ABC):
@@ -17,7 +18,7 @@ class PaymentProvider(ABC):
     Provider Responsibilities:
     1. Create payment links/orders via their API
     2. Verify incoming webhook signatures for authenticity
-    3. Process webhook events and return standardized results
+    3. Parse webhook events and return a PaymentRecord with all extractable fields
     """
 
     @property
@@ -39,81 +40,25 @@ class PaymentProvider(ABC):
         customer_phone: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> PaymentLinkResponse:
-        """
-        Create a hosted payment link with the provider.
-
-        Args:
-            user_id: Internal user identifier
-            amount: Amount in smallest currency unit (paise for INR, cents for USD)
-            currency: ISO 4217 currency code
-            description: Payment description
-            customer_email: Customer email for receipt/notifications
-            customer_phone: Customer phone for SMS notifications
-            metadata: Additional key-value pairs to attach to the payment
-
-        Returns:
-            PaymentLinkResponse with payment URL and metadata
-        """
+        """Create a hosted payment link with the provider."""
         ...
 
     # ─── Webhook Handling ────────────────────────────────────────────────────
 
     @abstractmethod
     def verify_webhook_signature(self, payload: Dict[str, Any], signature: str, secret: Optional[str] = None) -> bool:
-        """
-        Verify the webhook signature from the provider.
-
-        Args:
-            payload: The webhook request body (parsed JSON)
-            signature: The signature from the webhook header
-            secret: Optional webhook secret (falls back to provider default)
-
-        Returns:
-            True if signature is valid
-
-        Raises:
-            ValueError: If signature is invalid
-        """
+        """Verify the webhook signature from the provider."""
         ...
 
     @abstractmethod
-    async def handle_webhook_event(self, payload: Dict[str, Any]) -> PaymentResult:
+    async def handle_webhook_event(self, payload: Dict[str, Any]) -> Optional[PaymentRecord]:
         """
-        Process a webhook event from the provider.
+        Parse webhook payload and return a PaymentRecord with all extractable fields.
 
-        This method:
-        1. Parses the webhook payload
-        2. Extracts payment details (user_id, amount, status, method)
-        3. Returns a standardized PaymentResult
+        The provider parses its own webhook format and extracts:
+        - provider_payment_link_id, provider_payment_id, provider_order_id
+        - user_id, amount, status, payment_method
 
-        The caller (PaymentService) is responsible for:
-        - Verifying the signature before calling this
-        - Adding credits to the user account
-        - Updating the payment record in the database
-
-        Args:
-            payload: The full webhook payload from the provider
-
-        Returns:
-            PaymentResult with payment details and status
+        Returns None if the webhook event has no payment-related data.
         """
         ...
-
-    # ─── Utility Methods ─────────────────────────────────────────────────────
-
-    def convert_amount(self, amount_inr: float, credits_per_inr: float = 1.0, bonus_multiplier: float = 1.0) -> float:
-        """
-        Calculate credits to add based on amount.
-
-        Providers can override this for custom pricing, but the default
-        implementation uses a simple conversion rate with optional bonus.
-
-        Args:
-            amount_inr: Amount in INR
-            credits_per_inr: Base conversion rate (default 1:1)
-            bonus_multiplier: Bonus multiplier for promotional tiers
-
-        Returns:
-            Number of credits to add
-        """
-        return amount_inr * credits_per_inr * bonus_multiplier
