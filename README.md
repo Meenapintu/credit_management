@@ -7,8 +7,6 @@
 [![FastAPI](https://img.shields.io/badge/PRs-welcome-brightgreencolor=00AA00)](https://fastapi.tiangolo.com/)
 [![FastAPI](https://img.shields.io/badge/Framework-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
 
-[By default it provedFastAPI implentation but it's framework agnostic ]
-
 **Production-ready credit management system** for AI/LLM applications. Automatic credit deduction, Razorpay payment integration, subscription plans, promo codes, and multi-provider webhooks.
 
 ## ✨ Why Credit Management?

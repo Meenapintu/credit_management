@@ -163,7 +163,7 @@ async def payment_history(
     )
 
 
-@router.get("/payments/{payment_id}")
+@router.get("/payments/{payment_id}", response_model=PaymentRecordResponse)
 async def get_payment(
     payment_id: str,
     user_id: str = FastAPIHeader(None, alias="X-User-Id"),
