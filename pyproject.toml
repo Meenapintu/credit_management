@@ -3,18 +3,37 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "Credit_Management"
-version = "0.6.1"
+name = "credit-management"
+version = "0.7.0"
 authors = [
   { name="Pintu Lal", email="pintulalmee@gmail.com" },
 ]
-description = "A credit management system."
+description = "Production-ready credit management system for AI/LLM applications with payment integration"
 readme = "README.md"
 requires-python = ">=3.7"
+license = {text = "MIT"}
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = [
+    "credit-management", "payments", "razorpay", "stripe", "fastapi",
+    "async", "llm", "ai", "credits", "billing", "subscriptions",
+    "promo-codes", "webhooks", "atomic-updates", "idempotent",
 ]
 dependencies = [
     "fastapi>=0.103.2",
@@ -24,16 +43,12 @@ dependencies = [
     "starlette>=0.27.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "uvicorn",
-]
-
 [project.urls]
 "Homepage" = "https://github.com/Meenapintu/credit_management"
 "Documentation" = "https://github.com/Meenapintu/credit_management"
+"Changelog" = "https://github.com/Meenapintu/credit_management/blob/main/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/Meenapintu/credit_management/issues"
+"Source Code" = "https://github.com/Meenapintu/credit_management"
 
 [tool.setuptools.packages.find]
 where = ["src"]

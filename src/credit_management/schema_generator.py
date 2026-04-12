@@ -11,6 +11,8 @@ from .models.notification import NotificationEvent
 from .models.subscription import SubscriptionPlan, UserSubscription
 from .models.transaction import Transaction
 from .models.user import UserAccount
+from .models.payment import PaymentRecord, PaymentResult, PaymentLinkResponse
+from .models.promo import PromoRecord, UserPromoClaim, PromoEligibilityResponse
 
 
 MODEL_REGISTRY: List[Type[DBSerializableModel]] = [
@@ -22,6 +24,9 @@ MODEL_REGISTRY: List[Type[DBSerializableModel]] = [
     ReservedCredits,
     NotificationEvent,
     LedgerEntry,
+    PaymentRecord,
+    PromoRecord,
+    UserPromoClaim,
 ]
 
 
@@ -77,9 +82,7 @@ def _map_logical_to_sql(logical_type: str, dialect: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate DB schemas for the credit management module."
-    )
+    parser = argparse.ArgumentParser(description="Generate DB schemas for the credit management module.")
     parser.add_argument(
         "--backend",
         choices=["sql", "nosql"],
@@ -104,4 +107,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
