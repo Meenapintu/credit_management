@@ -75,9 +75,9 @@ async def payment_webhook(
         return JSONResponse(status_code=200, content={"status": "ok"})
 
     except ValueError as e:
-        logger.warning(f"Webhook router: signature verification failed for {provider_name}")
+        logger.warning(f"Webhook router: signature verification failed for {provider_name}{e}")
         return JSONResponse(status_code=401, content={"error": "Invalid signature"})
 
     except Exception as e:
-        logger.error(f"Webhook router: processing error for {provider_name}")
+        logger.error(f"Webhook router: processing error for {provider_name} {e}")
         return JSONResponse(status_code=500, content={"error": "Webhook processing failed"})

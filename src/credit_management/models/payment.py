@@ -75,6 +75,7 @@ class PaymentLinkResponse(DBSerializableModel):
     """Response returned when a payment link is created."""
 
     payment_id: str
+    provider_payment_link_id: str
     provider: ProviderType
     payment_url: str
     amount: float

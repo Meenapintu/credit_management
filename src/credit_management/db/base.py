@@ -135,6 +135,12 @@ class BaseDBManager(ABC):
     async def add_payment_record(self, record: PaymentRecord) -> PaymentRecord: ...
 
     @abstractmethod
+    async def get_payment_by_provider_id(self, provider_payment_id: str) -> Optional[PaymentRecord]: ...
+
+    @abstractmethod
+    async def get_payment_by_order_id(self, provider_order_id: str) -> Optional[PaymentRecord]: ...
+
+    @abstractmethod
     async def get_payment_record(self, payment_id: str, user_id: Optional[str] = None) -> Optional[PaymentRecord]: ...
 
     @abstractmethod
@@ -144,6 +150,9 @@ class BaseDBManager(ABC):
 
     @abstractmethod
     async def count_payment_records(self, user_id: str) -> int: ...
+
+    @abstractmethod
+    async def update_payment_record_atomic(self, payment_id: str, credits_to_add: float, status: str, provider_payment_id: str = None, provider_order_id: str = None) -> bool: ...
 
     # Promo operations
     @abstractmethod
