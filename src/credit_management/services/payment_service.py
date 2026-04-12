@@ -143,7 +143,7 @@ class PaymentService:
             id=link.payment_id,
             user_id=user_id,
             provider=ProviderType(provider_name),
-            provider_payment_link_id=link.payment_id,
+            provider_payment_link_id=link.provider_payment_link_id,
             amount=int(amount_inr * 100),
             currency="INR",
             amount_inr=amount_inr,
@@ -186,11 +186,10 @@ class PaymentService:
             logger.warning(f"PaymentService webhook: signature failed [{trace}]")
             return self._result(False, error="invalid_signature")
 
-        # 3. Find existing record by plink_id, order_id, or payment_id
+        # 3. Find existing record by reference_id, plink_id, order_id, or payment_id
+        ref_id = provider_record.id
         existing = await self._find_record(
-            provider_record.provider_payment_link_id,
-            provider_record.provider_order_id,
-            provider_record.provider_payment_id,
+            reference_id=ref_id,
         )
 
         # 4. Validate immutable fields if existing record found
@@ -240,9 +239,19 @@ class PaymentService:
         )
 
     async def _find_record(
-        self, plink_id: Optional[str], order_id: Optional[str], payment_id: Optional[str]
+        self,
+        plink_id: Optional[str],
+        order_id: Optional[str],
+        payment_id: Optional[str],
+        reference_id: Optional[str] = None,
     ) -> Optional[PaymentRecord]:
-        """Find existing record by any available ID."""
+        """Find existing record. Try reference_id first (most reliable)."""
+        # 1. Try reference_id first (set by us, echoed by Razorpay in all events)
+        if reference_id:
+            rec = await self._db.get_payment_record(reference_id)
+            if rec:
+                return rec
+        # 2. Try plink_id, order_id, payment_id
         if plink_id:
             rec = await self._db.get_payment_record(plink_id)
             if rec:
@@ -271,6 +280,15 @@ class PaymentService:
             issues.append(f"amount_inr: existing={existing.amount_inr}, provider={provider_record.amount_inr}")
         return "; ".join(issues) if issues else None
 
+    # Allowed events that can add credits
+    _CREDIT_EVENTS = {
+        "payment_link.paid",
+        "payment_link.partially_paid",
+        "order.paid",
+        "invoice.paid",
+        "invoice.partially_paid",
+    }
+
     async def _process_add_credits(
         self,
         existing: Optional[PaymentRecord],
@@ -278,11 +296,24 @@ class PaymentService:
         trace: str,
         target_status: Optional[PaymentStatus],
     ) -> Any:
-        """Add credits using atomic update to prevent race conditions."""
-        # Ensure record exists
+
+        # Unique identifier: reference_id (from notes) > plink_id > payment_id
+        ref_id = provider_record.id
+        if not ref_id:
+            logger.error(f"PaymentService webhook: no unique identifier [{trace}]")
+            return self._result(False, error="no_unique_payment_id")
+        # If no existing record found, skip — do NOT create duplicates
         if not existing:
-            await self._db.add_payment_record(provider_record)
-            existing = provider_record
+            logger.error(f"PaymentService webhook: no record for unique_id={unique_id} [{trace}]. Skipping.")
+            return self._result(
+                True,
+                payment_id=ref_id,
+                user_id=provider_record.user_id,
+                amount=provider_record.amount_inr,
+                credits_added=0,
+                status="not_found",
+                idempotent=True,
+            )
 
         if existing.credits_added > 0:
             return self._result(
@@ -295,26 +326,24 @@ class PaymentService:
                 idempotent=True,
             )
 
-        # Calculate credits
         credits = (
             existing.credits_to_add if existing.credits_to_add > 0 else self.calculate_credits(existing.amount_inr)
         )
         status_val = target_status.value if target_status else PaymentStatus.PAID.value
 
-        # Atomic update: sets credits, status, and provider IDs in one operation
+        # Atomic update: only succeeds if credits_added is currently 0
         updated = await self._db.update_payment_record_atomic(
-            existing.id,
+            ref_id,
             credits,
             status_val,
             provider_record.provider_payment_id,
             provider_record.provider_order_id,
         )
         if not updated:
-            # Another process already added credits
-            rec = await self._db.get_payment_record(existing.id)
+            rec = await self._db.get_payment_record(ref_id)
             return self._result(
                 True,
-                payment_id=existing.id,
+                payment_id=ref_id,
                 user_id=existing.user_id,
                 amount=existing.amount_inr,
                 credits_added=(rec.credits_added if rec else credits),
@@ -322,22 +351,21 @@ class PaymentService:
                 idempotent=True,
             )
 
-        # Record atomic — now add credits to user
         try:
             await self._credit_service.add_credits(
                 user_id=existing.user_id,
                 amount=credits,
-                description=f"Payment: {existing.id}",
-                correlation_id=existing.id,
+                description=f"Payment: {ref_id}",
+                correlation_id=ref_id,
             )
         except Exception:
-            logger.error(f"PaymentService webhook: failed to add credits to user [{trace}]")
+            logger.error(f"PaymentService webhook: failed to add credits [{trace}]")
             return self._result(False, error="credit_addition_failed")
 
         logger.info(f"PaymentService webhook: credits_added={credits} [{trace}]")
         return self._result(
             True,
-            payment_id=existing.id,
+            payment_id=ref_id,
             user_id=existing.user_id,
             amount=existing.amount_inr,
             credits_added=credits,

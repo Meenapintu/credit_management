@@ -81,7 +81,7 @@ class RazorpayProvider(PaymentProvider):
 
         ts = str(int(datetime.utcnow().timestamp()))
         user_hash = hashlib.md5(user_id.encode()).hexdigest()[:8]
-        payment_id = f"payl_{user_hash}_{ts}"
+        ref_id = f"payl_{user_hash}_{ts}"
 
         link_data = {
             "amount": int(amount),
@@ -89,7 +89,7 @@ class RazorpayProvider(PaymentProvider):
             "accept_partial": False,
             "first_min_partial_amount": 0,
             "description": description,
-            "reference_id": payment_id,
+            "reference_id": ref_id,
             "notify": {"email": True, "sms": True},
             "callback_url": self.callback_url,
             "notes": {"user_id": user_id, "purpose": "credit_topup"},
@@ -125,22 +125,10 @@ class RazorpayProvider(PaymentProvider):
         razorpay_link_id = link.get("id")
         short_url = link.get("short_url")
 
-        if self.audit_repo:
-            try:
-                await self.audit_repo.log_outbound(
-                    payment_link_id=razorpay_link_id,
-                    user_id=user_id,
-                    event_type="payment_link.created",
-                    request_payload=link_data,
-                    response_payload=link,
-                    http_status=http_status,
-                )
-            except Exception:
-                pass
-
         logger.info("Razorpay payment_link.created")
         return PaymentLinkResponse(
-            payment_id=razorpay_link_id,
+            payment_id=link.get("reference_id", ref_id),  # Use our reference_id, not Razorpay's plink_id
+            provider_payment_link_id=razorpay_link_id,
             provider=ProviderType.RAZORPAY,
             payment_url=short_url,
             amount=amount / 100 if amount > 100 else amount,
@@ -190,6 +178,10 @@ class RazorpayProvider(PaymentProvider):
         amount_inr = amount / 100
         method = _get(payment, "method")
         status_str = _get(payment_link, "status") or _get(payment, "status")
+        if not reference_id:
+            reference_id = (payment.get("notes", {})).get("reference_id", None) or (order.get("notes", {})).get(
+                "reference_id", None
+            )
 
         # Map Razorpay status to our PaymentStatus
         if status_str == "paid" or status_str == "captured":
@@ -205,10 +197,8 @@ class RazorpayProvider(PaymentProvider):
         else:
             status = PaymentStatus.PENDING
 
-        # Determine record ID: prefer plink_id for payment_link events
-        record_id = plink_id or order_id or payment_id or f"webhook_{event_type}_{hash(str(payload)) % 1000000}"
-
         return PaymentRecord(
+            id=reference_id,
             user_id=user_id or "",
             provider=ProviderType.RAZORPAY,
             provider_payment_link_id=plink_id,
