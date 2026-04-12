@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from ..db.base import BaseDBManager
 from ..logging.ledger_logger import LedgerLogger
 from ..cache.base import AsyncCacheBackend
-from ..models.payment import PaymentRecord, PaymentStatus, ProviderType
+from ..models.payment import PaymentLinkResponse, PaymentRecord, PaymentStatus, ProviderType
 from .credit_service import CreditService
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ class PaymentService:
         credits_to_add = self.calculate_credits(amount_inr)
         payment_metadata = {"credits_to_add": str(credits_to_add), **(metadata or {})}
 
-        link = await provider.create_payment_link(
+        link: PaymentLinkResponse = await provider.create_payment_link(
             user_id=user_id,
             amount=int(amount_inr * 100),
             currency="INR",
@@ -203,7 +203,7 @@ class PaymentService:
         target_value = target_status.value if target_status else None
         if target_value and not _is_forward(current_status, target_value):
             logger.info(
-                f"PaymentService webhook: not forward move current={current_status} new={target_value} [{trace}]"
+                f"PaymentService webhook: not forward move current={current_status} new={target_value} [{trace}. Skipping]"
             )
             return self._result(
                 True,
@@ -226,6 +226,7 @@ class PaymentService:
         if existing:
             await self._merge_and_save(existing, provider_record, target_status)
         else:
+            logger.error(f"Webhook record not found , adding payment record only, no credit issue:  [{trace}]")
             await self._db.add_payment_record(provider_record)
 
         logger.info(f"PaymentService webhook: {event_type} → {target_value} [{trace}]")
@@ -240,28 +241,12 @@ class PaymentService:
 
     async def _find_record(
         self,
-        plink_id: Optional[str],
-        order_id: Optional[str],
-        payment_id: Optional[str],
         reference_id: Optional[str] = None,
     ) -> Optional[PaymentRecord]:
-        """Find existing record. Try reference_id first (most reliable)."""
-        # 1. Try reference_id first (set by us, echoed by Razorpay in all events)
-        if reference_id:
-            rec = await self._db.get_payment_record(reference_id)
-            if rec:
-                return rec
-        # 2. Try plink_id, order_id, payment_id
-        if plink_id:
-            rec = await self._db.get_payment_record(plink_id)
-            if rec:
-                return rec
-        if order_id:
-            rec = await self._db.get_payment_by_order_id(order_id)
-            if rec:
-                return rec
-        if payment_id:
-            return await self._db.get_payment_by_provider_id(payment_id)
+        rec = await self._db.get_payment_record(reference_id)
+        if rec:
+            return rec
+
         return None
 
     @staticmethod
@@ -304,7 +289,7 @@ class PaymentService:
             return self._result(False, error="no_unique_payment_id")
         # If no existing record found, skip — do NOT create duplicates
         if not existing:
-            logger.error(f"PaymentService webhook: no record for unique_id={unique_id} [{trace}]. Skipping.")
+            logger.error(f"PaymentService webhook: no record for unique_id={ref_id} [{trace}]. Skipping.")
             return self._result(
                 True,
                 payment_id=ref_id,
@@ -316,6 +301,9 @@ class PaymentService:
             )
 
         if existing.credits_added > 0:
+            logger.error(
+                f"PaymentService webhook: credit already added for payment record unique_id={ref_id} [{trace}]. Skipping."
+            )
             return self._result(
                 True,
                 payment_id=existing.id,
@@ -383,6 +371,7 @@ class PaymentService:
             return self._result(False, error="payment_not_found")
 
         # For now, just update status. Refund credit deduction logic can be added later.
+        logger.error(f"PaymentService webhook: Fefund event detected but not implemnted [{trace}. Skipping]")
         existing.status = event_type
         await self._db.add_payment_record(existing)
 

@@ -92,7 +92,7 @@ class RazorpayProvider(PaymentProvider):
             "reference_id": ref_id,
             "notify": {"email": True, "sms": True},
             "callback_url": self.callback_url,
-            "notes": {"user_id": user_id, "purpose": "credit_topup"},
+            "notes": {"user_id": user_id, "purpose": "credit_topup", "reference_id": ref_id},
         }
         if metadata:
             link_data["notes"].update(metadata)
