@@ -151,6 +151,9 @@ class BaseDBManager(ABC):
     @abstractmethod
     async def count_payment_records(self, user_id: str) -> int: ...
 
+    @abstractmethod
+    async def update_payment_record_atomic(self, payment_id: str, credits_to_add: float, status: str, provider_payment_id: str = None, provider_order_id: str = None) -> bool: ...
+
     # Promo operations
     @abstractmethod
     async def add_promo(self, promo: PromoRecord) -> PromoRecord: ...

@@ -278,9 +278,9 @@ class PaymentService:
         trace: str,
         target_status: Optional[PaymentStatus],
     ) -> Any:
-        """Add credits using pre-calculated credits_to_add. Skip if already added."""
+        """Add credits using atomic update to prevent race conditions."""
+        # Ensure record exists
         if not existing:
-            # No existing record — create one from provider data first
             await self._db.add_payment_record(provider_record)
             existing = provider_record
 
@@ -295,11 +295,34 @@ class PaymentService:
                 idempotent=True,
             )
 
-        # Use pre-calculated credits_to_add from the record
+        # Calculate credits
         credits = (
             existing.credits_to_add if existing.credits_to_add > 0 else self.calculate_credits(existing.amount_inr)
         )
+        status_val = target_status.value if target_status else PaymentStatus.PAID.value
 
+        # Atomic update: sets credits, status, and provider IDs in one operation
+        updated = await self._db.update_payment_record_atomic(
+            existing.id,
+            credits,
+            status_val,
+            provider_record.provider_payment_id,
+            provider_record.provider_order_id,
+        )
+        if not updated:
+            # Another process already added credits
+            rec = await self._db.get_payment_record(existing.id)
+            return self._result(
+                True,
+                payment_id=existing.id,
+                user_id=existing.user_id,
+                amount=existing.amount_inr,
+                credits_added=(rec.credits_added if rec else credits),
+                status=(rec.status if rec else status_val),
+                idempotent=True,
+            )
+
+        # Record atomic — now add credits to user
         try:
             await self._credit_service.add_credits(
                 user_id=existing.user_id,
@@ -308,18 +331,8 @@ class PaymentService:
                 correlation_id=existing.id,
             )
         except Exception:
-            logger.error(f"PaymentService webhook: failed to add credits [{trace}]")
+            logger.error(f"PaymentService webhook: failed to add credits to user [{trace}]")
             return self._result(False, error="credit_addition_failed")
-
-        # Update status and IDs
-        existing.credits_added = credits
-        if target_status:
-            existing.status = target_status.value
-        if provider_record.provider_payment_id and not existing.provider_payment_id:
-            existing.provider_payment_id = provider_record.provider_payment_id
-        if provider_record.provider_order_id and not existing.provider_order_id:
-            existing.provider_order_id = provider_record.provider_order_id
-        await self._db.add_payment_record(existing)
 
         logger.info(f"PaymentService webhook: credits_added={credits} [{trace}]")
         return self._result(
@@ -328,7 +341,7 @@ class PaymentService:
             user_id=existing.user_id,
             amount=existing.amount_inr,
             credits_added=credits,
-            status=existing.status,
+            status=status_val,
         )
 
     async def _process_refund(self, existing: Optional[PaymentRecord], event_type: str, trace: str) -> Any:

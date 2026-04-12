@@ -280,6 +280,27 @@ class MongoDBManager(BaseDBManager):
         docs = await cursor.to_list(length=None)
         return [self._decode(PaymentRecord, d) for d in docs if d is not None]
 
+    async def update_payment_record_atomic(
+        self,
+        payment_id: str,
+        credits_to_add: float,
+        status: str,
+        provider_payment_id: str = None,
+        provider_order_id: str = None,
+    ) -> bool:
+        col = self._db[PaymentRecord.collection_name]
+        set_fields = {"credits_added": credits_to_add, "status": status}
+        if provider_payment_id:
+            set_fields["provider_payment_id"] = provider_payment_id
+        if provider_order_id:
+            set_fields["provider_order_id"] = provider_order_id
+
+        result = await col.update_one(
+            {"_id": payment_id, "credits_added": 0},
+            {"$set": set_fields},
+        )
+        return result.modified_count > 0
+
     async def count_payment_records(self, user_id: str) -> int:
         col = self._db[PaymentRecord.collection_name]
         return await col.count_documents({"user_id": user_id})

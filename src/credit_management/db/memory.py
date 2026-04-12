@@ -214,6 +214,25 @@ class InMemoryDBManager(BaseDBManager):
     async def count_payment_records(self, user_id: str) -> int:
         return sum(1 for r in self._payments.values() if r.user_id == user_id)
 
+    async def update_payment_record_atomic(
+        self,
+        payment_id: str,
+        credits_to_add: float,
+        status: str,
+        provider_payment_id: str = None,
+        provider_order_id: str = None,
+    ) -> bool:
+        record = self._payments.get(payment_id)
+        if record and record.credits_added == 0:
+            record.credits_added = credits_to_add
+            record.status = status
+            if provider_payment_id:
+                record.provider_payment_id = provider_payment_id
+            if provider_order_id:
+                record.provider_order_id = provider_order_id
+            return True
+        return False
+
     # Promo operations
     async def add_promo(self, promo: PromoRecord) -> PromoRecord:
         if promo.id is None:
