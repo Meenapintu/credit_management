@@ -48,19 +48,19 @@ class PaymentRecordResponse(BaseModel):
     id: str
     user_id: str
     provider: str
-    provider_payment_id: Optional[str]
-    provider_payment_link_id: Optional[str]
+    provider_payment_id: Optional[str] = None
+    provider_payment_link_id: Optional[str] = None
     amount: float
     currency: str
     amount_inr: float
     credits_to_add: float
     credits_added: float
     status: str
-    payment_method: Optional[str]
-    description: Optional[str]
+    payment_method: Optional[str] = None
+    description: Optional[str] = None
     created_at: str
-    completed_at: Optional[str]
-    error_message: Optional[str]
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class PaymentHistoryResponse(BaseModel):
